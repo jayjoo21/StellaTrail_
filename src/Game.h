@@ -65,10 +65,10 @@ private:
     // Mars 3-zone entry hints (zone 0 shown at load, 1-2 on crossing doors)
     bool m_marsZoneShown[3] = {};
 
-    // R-key level reset with fade transition
-    bool  m_resetting = false;
-    float m_resetFade = 0.f;   // 0=clear, 1=black
-    bool  m_resetDone = false; // reload happened, now fading back in
+    // E-key rock grab/pull state
+    int   m_grabbedRock = -1;
+    Vec2  m_grabOffset  = {};
+    float m_marsRockFlash[5] = {};
 
     // Base interior player position
     Vec2 m_basePlayerPos = {640.f, 550.f};
@@ -102,6 +102,9 @@ private:
     void applyGimmickToPlayer();
     void updateGimmicks(float dt);
     void tryTriggerGimmickSpeech();
+    int  tryGrabRock();
+    bool isNearRock() const;
+    void checkMarsRockBoundaries();
     std::vector<AABB> collectWalls() const;
     std::vector<AABB> collectBaseWalls() const;
 

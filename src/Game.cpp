@@ -174,37 +174,40 @@ void Game::loadPlanet(int idx) {
     m_stellaTimer = 0.f;
     for (int i = 0; i < 3; i++) m_marsZoneShown[i] = false;
 
+    m_grabbedRock = -1;
+    for (int i = 0; i < 5; i++) m_marsRockFlash[i] = 0.f;
+
     m_map = TileMap();
     m_map.load(PLANET_MAPS[idx], m_renderer, "");
 
     m_puzzle = PuzzleSystem();
     m_puzzle.setPlanetPhysics(Planets::ALL[idx]);
 
-    // Mars: 3-zone puzzle — Zone1(tutorial), Zone2(dual-plate), Zone3(distance)
+    // Mars: 3-zone push+pull puzzle
     if (idx == 3) {
-        // Zone 1: 1 rock, plate extends right up to Door0 so overshoot = still on plate
-        m_puzzle.addRock(192.f, 596.f, 5.f);
-        m_puzzle.addPressurePlate(224.f, 572.f, 96.f, 32.f, 0);  // right edge = 320 = Door0
+        // Zone 1 (push only tutorial): rock pushed right to plate
+        m_puzzle.addRock(192.f, 580.f, 5.f);                       // rock 0
+        m_puzzle.addPressurePlate(224.f, 572.f, 96.f, 32.f, 0);    // right edge=320=Door0
         m_puzzle.addDoor(320.f, 0.f, 32.f, 608.f);
-        // Zone 2: 2 rocks on separate vertical tracks, plates extend to Door1
-        m_puzzle.addRock(480.f, 440.f, 5.f);  // upper track
-        m_puzzle.addRock(480.f, 596.f, 5.f);  // lower track
-        m_puzzle.addPressurePlate(576.f, 420.f, 96.f, 32.f, 1);  // upper, right edge = 672 = Door1
-        m_puzzle.addPressurePlate(576.f, 572.f, 96.f, 32.f, 1);  // lower, right edge = 672 = Door1
+        // Zone 2 (push + pull): rock1 push right, rock2 pull left to upper plate
+        m_puzzle.addRock(420.f, 580.f, 5.f);                       // rock 1 — push right
+        m_puzzle.addRock(620.f, 400.f, 5.f);                       // rock 2 — pull left (Door1 blocks right side)
+        m_puzzle.addPressurePlate(544.f, 572.f, 128.f, 32.f, 1);   // lower plate, right edge=672=Door1
+        m_puzzle.addPressurePlate(400.f, 388.f,  80.f, 32.f, 1);   // upper plate for rock2
         m_puzzle.addDoor(672.f, 0.f, 32.f, 608.f);
-        // Zone 3: 1 rock, longer push, plate extends to Door2
-        m_puzzle.addRock(736.f, 596.f, 5.f);
-        m_puzzle.addPressurePlate(864.f, 572.f, 96.f, 32.f, 2);  // right edge = 960 = Door2
+        // Zone 3 (push + pull combo): rock3 push right, rock4 pull left to upper plate
+        m_puzzle.addRock(760.f, 580.f, 5.f);                       // rock 3 — push right
+        m_puzzle.addRock(920.f, 350.f, 5.f);                       // rock 4 — pull left (Door2 blocks right side)
+        m_puzzle.addPressurePlate(864.f, 572.f,  96.f, 32.f, 2);   // lower plate, right edge=960=Door2
+        m_puzzle.addPressurePlate(750.f, 336.f,  80.f, 32.f, 2);   // upper plate for rock4
         m_puzzle.addDoor(960.f, 0.f, 32.f, 608.f);
-        // Parts
+        // Parts and goal
         m_puzzle.addPart(368.f, 580.f);
-        m_puzzle.addPart(720.f, 580.f);
-        // Base
+        m_puzzle.addPart(714.f, 580.f);
         m_puzzle.setWarpGate(1096.f, 548.f);
         m_puzzle.setBaseEntrance(1096.f, 548.f);
         m_player.pos = {80.f, 548.f};
         m_camX = m_camY = 0.f;
-        // Zone 1 entry hint
         m_marsZoneShown[0] = true;
         m_stellaText  = "바위를 밀어서 압력판에 올려봐";
         m_stellaTimer = 5.f;
@@ -310,15 +313,16 @@ void Game::handleEvents() {
 
         if (e.type == SDL_KEYDOWN) {
             auto sym = e.key.keysym.sym;
-            if (sym == SDLK_r && m_scene == Scene::Playing && !m_resetting) {
-                m_resetting = true;
-                m_resetFade = 0.f;
-                m_resetDone = false;
+            if (sym == SDLK_e && m_scene == Scene::Playing) {
+                if (m_grabbedRock >= 0) {
+                    m_grabbedRock = -1;
+                } else {
+                    m_grabbedRock = tryGrabRock();
+                }
             }
             if (sym == SDLK_ESCAPE) {
                 if (m_scene == Scene::Playing || m_scene == Scene::PlanetIntro) {
-                    m_resetting = false;
-                    m_resetFade = 0.f;
+                    m_grabbedRock = -1;
                     m_scene = Scene::SolarMap;
                 }
                 else if (m_scene == Scene::BaseInterior) {
@@ -400,29 +404,22 @@ void Game::updateIntro(float dt) {
 }
 
 void Game::updatePlaying(float dt) {
-    // R-key reset: fade out → reload → fade in
-    if (m_resetting) {
-        if (!m_resetDone) {
-            m_resetFade = std::min(m_resetFade + dt / 0.35f, 1.f);
-            if (m_resetFade >= 1.f) {
-                m_resetDone = true;
-                loadPlanet(m_currentPlanet);
-            }
-        } else {
-            m_resetFade = std::max(m_resetFade - dt / 0.35f, 0.f);
-            if (m_resetFade <= 0.f) {
-                m_resetting = false;
-                m_resetDone = false;
-            }
-        }
-        return;
-    }
-
     updateGimmicks(dt);
 
     auto walls = collectWalls();
     const Uint8* keys = SDL_GetKeyboardState(nullptr);
     m_player.update(dt, keys, walls);
+
+    // Grabbed rock follows player at fixed offset
+    if (m_grabbedRock >= 0) {
+        if (m_grabbedRock < (int)m_puzzle.rocks.size() && m_puzzle.rocks[m_grabbedRock].active) {
+            m_puzzle.rocks[m_grabbedRock].pos = m_player.pos + m_grabOffset;
+            m_puzzle.rocks[m_grabbedRock].vel = {};
+        } else {
+            m_grabbedRock = -1;
+        }
+    }
+
     handlePlayerRockInteraction();
     m_puzzle.resolveRockVsWalls(walls);
     m_puzzle.update(dt);
@@ -451,22 +448,28 @@ void Game::updatePlaying(float dt) {
         }
     }
 
-    // Mars zone transition hints
+    // Mars zone transition hints + boundary auto-reset
     if (m_currentPlanet == 3) {
         if (!m_marsZoneShown[1] && m_player.pos.x > 354.f) {
             m_marsZoneShown[1] = true;
-            m_stellaText  = "이번엔 두 개를 동시에 올려야 해!";
-            m_stellaTimer = 4.5f;
+            m_stellaText  = "이번엔 당겨야 해! E키로 바위를 잡아봐";
+            m_stellaTimer = 5.f;
         }
         if (!m_marsZoneShown[2] && m_player.pos.x > 706.f) {
             m_marsZoneShown[2] = true;
-            m_stellaText  = "마지막 구역... 끝까지 밀어붙여!";
+            m_stellaText  = "밀기+당기기 조합으로 풀어야 해!";
             m_stellaTimer = 4.5f;
         }
+        for (int i = 0; i < 5; i++) {
+            if (m_marsRockFlash[i] > 0.f)
+                m_marsRockFlash[i] = std::max(0.f, m_marsRockFlash[i] - dt * 2.f);
+        }
+        checkMarsRockBoundaries();
     }
 
     // Check base entrance
     if (m_player.getAABB().intersects(m_puzzle.baseEntrance.getAABB())) {
+        m_grabbedRock = -1;
         m_baseTimer = 0.f;
         m_player.vel = {};
         m_basePlayerPos = {640.f, 560.f};
@@ -559,6 +562,7 @@ void Game::updateGimmicks(float dt) {
 }
 
 void Game::handlePlayerRockInteraction() {
+    if (m_grabbedRock >= 0) return;
     if (!m_player.tryPush) return;
     AABB pBox  = m_player.getAABB();
     AABB probe = {pBox.x-4.f, pBox.y-4.f, pBox.w+8.f, pBox.h+8.f};
@@ -1096,6 +1100,15 @@ void Game::renderPlaying() {
 
     for (const auto& d : dlist) {
         if (d.type == 0) {
+            // Yellow outline around player when grabbing
+            if (m_grabbedRock >= 0) {
+                float px = m_player.pos.x - m_camX, py = m_player.pos.y - m_camY;
+                SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
+                SDL_SetRenderDrawColor(m_renderer, 255, 230, 0, 200);
+                SDL_FRect pOutline = {px - 20.f, py - 20.f, 40.f, 40.f};
+                SDL_RenderDrawRectF(m_renderer, &pOutline);
+                SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
+            }
             m_player.render(m_renderer, m_camX, m_camY);
         } else if (d.type == 1) {
             // Part: yellow diamond star + sparkle particles
@@ -1150,7 +1163,32 @@ void Game::renderPlaying() {
             // Highlight (top-left)
             SDL_SetRenderDrawColor(m_renderer, 158, 122, 84, 200);
             fillCircle(m_renderer, rx - rad*0.28f, ry - rad*0.28f, rad * 0.42f);
+            // Yellow outline when grabbed
+            if (d.idx == m_grabbedRock) {
+                SDL_SetRenderDrawColor(m_renderer, 255, 230, 0, 230);
+                SDL_FRect rOutline = {rx - rad - 3.f, ry - rad - 3.f, (rad + 3.f)*2.f, (rad + 3.f)*2.f};
+                SDL_RenderDrawRectF(m_renderer, &rOutline);
+            }
+            // White flash sparkle on zone-reset
+            if (m_currentPlanet == 3 && d.idx < 5 && m_marsRockFlash[d.idx] > 0.f) {
+                Uint8 fa = (Uint8)(m_marsRockFlash[d.idx] * 255.f);
+                SDL_SetRenderDrawColor(m_renderer, 255, 255, 200, fa);
+                fillCircle(m_renderer, rx, ry, rad + 6.f);
+            }
             SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
+        }
+    }
+
+    // E-key hint above player
+    if (m_ui.getFont()) {
+        float hx = m_player.pos.x - m_camX;
+        float hy = m_player.pos.y - m_camY - 42.f;
+        if (m_grabbedRock >= 0) {
+            SDL_Color hc = {255, 230, 50, 230};
+            m_ui.renderText(m_renderer, m_ui.getFont(), "E: 놓기", hx, hy, hc, true);
+        } else if (isNearRock()) {
+            SDL_Color hc = {200, 240, 100, 210};
+            m_ui.renderText(m_renderer, m_ui.getFont(), "E: 잡기", hx, hy, hc, true);
         }
     }
 
@@ -1215,11 +1253,6 @@ void Game::renderPlaying() {
         SDL_Color gc = {175, 210, 255, (Uint8)(195 * gp)};
         m_ui.renderText(m_renderer, m_ui.getFont(), goal,
                         m_screenW*0.5f, (float)m_screenH - 44.f, gc, true);
-        // R: reset hint (bottom-right corner)
-        float rb = 0.5f + 0.5f * std::sin(m_titleTimer * 1.6f);
-        SDL_Color rc = {160, 160, 160, (Uint8)(95 + 55 * rb)};
-        m_ui.renderText(m_renderer, m_ui.getFont(), "R: 리셋",
-                        (float)m_screenW - 56.f, (float)m_screenH - 44.f, rc, true);
     }
 
     // HUD
@@ -1242,14 +1275,45 @@ void Game::renderPlaying() {
                 gimmickActive,
                 m_windWarning,
                 m_stellaText, stellaAlpha);
+}
 
-    // Reset fade overlay (covers everything when R is pressed)
-    if (m_resetFade > 0.f) {
-        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
-        SDL_SetRenderDrawColor(m_renderer, 0, 0, 0, (Uint8)(m_resetFade * 255.f));
-        SDL_FRect full = {0.f, 0.f, (float)m_screenW, (float)m_screenH};
-        SDL_RenderFillRectF(m_renderer, &full);
-        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
+int Game::tryGrabRock() {
+    AABB pBox  = m_player.getAABB();
+    AABB probe = {pBox.x - 16.f, pBox.y - 16.f, pBox.w + 32.f, pBox.h + 32.f};
+    for (int i = 0; i < (int)m_puzzle.rocks.size(); i++) {
+        if (!m_puzzle.rocks[i].active) continue;
+        if (m_puzzle.rocks[i].getAABB().intersects(probe)) {
+            m_grabOffset = m_puzzle.rocks[i].pos - m_player.pos;
+            return i;
+        }
+    }
+    return -1;
+}
+
+bool Game::isNearRock() const {
+    AABB pBox  = m_player.getAABB();
+    AABB probe = {pBox.x - 16.f, pBox.y - 16.f, pBox.w + 32.f, pBox.h + 32.f};
+    for (const auto& rock : m_puzzle.rocks) {
+        if (rock.active && rock.getAABB().intersects(probe)) return true;
+    }
+    return false;
+}
+
+void Game::checkMarsRockBoundaries() {
+    static const float XMIN[]    = {64.f, 352.f, 352.f, 704.f, 704.f};
+    static const float XMAX[]    = {320.f, 672.f, 672.f, 960.f, 960.f};
+    static const float RESET_X[] = {192.f, 420.f, 620.f, 760.f, 920.f};
+    static const float RESET_Y[] = {580.f, 580.f, 400.f, 580.f, 350.f};
+    int count = std::min((int)m_puzzle.rocks.size(), 5);
+    for (int i = 0; i < count; i++) {
+        auto& rock = m_puzzle.rocks[i];
+        if (!rock.active) continue;
+        if (rock.pos.x < XMIN[i] || rock.pos.x > XMAX[i]) {
+            rock.pos = {RESET_X[i], RESET_Y[i]};
+            rock.vel = {};
+            m_marsRockFlash[i] = 1.0f;
+            if (m_grabbedRock == i) m_grabbedRock = -1;
+        }
     }
 }
 
