@@ -451,6 +451,7 @@ void UI::renderText(SDL_Renderer* r, TTF_Font* font, const std::string& text,
     if (!surf) return;
     SDL_Texture* tex = SDL_CreateTextureFromSurface(r, surf);
     if (tex) {
+        SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
         SDL_SetTextureAlphaMod(tex, color.a);
         SDL_FRect dst = {centered ? x - surf->w/2.f : x, y,
                          (float)surf->w, (float)surf->h};

@@ -10,7 +10,8 @@ struct PressurePlate {
 
 struct Door {
     AABB area;
-    bool open = false;
+    bool  open     = false;
+    float openAnim = 0.f;   // 0=fully closed, 1=fully open (visual only)
 };
 
 struct Part {

@@ -133,7 +133,8 @@ static const EmotionalText EARTH_SIGNS[] = {
 
 bool Game::init(int sw, int sh, const std::string& title) {
     m_screenW = sw; m_screenH = sh;
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) < 0) return false;
+    if (SDL_Init(SDL_INIT_VIDEO) < 0) return false;
+    SDL_Init(SDL_INIT_AUDIO);   // optional — ignore failure if no audio device
     IMG_Init(IMG_INIT_PNG | IMG_INIT_JPG);
 
     m_window = SDL_CreateWindow(title.c_str(),
@@ -380,12 +381,12 @@ void Game::updatePlaying(float dt) {
         } else {
             msg = GENERIC_POPUPS[s_popupIdx++ % 4];
         }
-        m_ui.showPopup(msg, (float)(m_screenW/2), (float)(m_screenH/2 - 80));
+        m_ui.showPopup(msg, (float)(m_screenW/2), (float)(m_screenH - 120));
 
         if (m_planetPartsFound >= LAYOUTS[m_currentPlanet].partCount) {
             m_puzzle.activateWarpGate();
             m_ui.showPopup("기지로 돌아가 워프 게이트를 활성화하자!",
-                           (float)(m_screenW/2), (float)(m_screenH/2 - 50));
+                           (float)(m_screenW/2), (float)(m_screenH - 120));
         }
     }
 
@@ -534,6 +535,14 @@ static void fillCircle(SDL_Renderer* r, float cx, float cy, float rad) {
     for (float dy = -rad; dy <= rad; dy += 1.f) {
         float hw = std::sqrt(std::max(0.f, rad*rad - dy*dy));
         SDL_RenderDrawLineF(r, cx - hw, cy + dy, cx + hw, cy + dy);
+    }
+}
+
+static void fillDiamond(SDL_Renderer* r, float cx, float cy, float s) {
+    for (float dy = -s; dy <= s; dy += 1.f) {
+        float hw = s - std::abs(dy);
+        if (hw > 0.f)
+            SDL_RenderDrawLineF(r, cx - hw, cy + dy, cx + hw, cy + dy);
     }
 }
 
@@ -774,7 +783,7 @@ void Game::renderPrologue() {
     float astY = m_screenH * 0.64f;
     drawAstronaut(m_renderer, astX, astY, m_prologueTimer);
 
-    float fadeIn = std::min(m_prologueTimer / 0.45f, 1.f);
+    float fadeIn = std::min(m_prologueTimer / 0.18f, 1.f);
     float bx = m_screenW * 0.25f;
     float by = m_screenH * 0.43f;
     float bw = m_screenW * 0.68f;
@@ -879,26 +888,73 @@ void Game::renderPlaying() {
         SDL_RenderFillRectF(m_renderer, &overlay);
     }
 
-    // Pressure plates
+    // Pressure plates — button look: gray inactive / green+glow active
     for (const auto& plate : m_puzzle.plates) {
-        if (plate.pressed) SDL_SetRenderDrawColor(m_renderer, 255, 200, 50, 220);
-        else               SDL_SetRenderDrawColor(m_renderer, 180, 140, 30, 180);
-        SDL_FRect rf = {plate.area.x-m_camX, plate.area.y-m_camY,
-                        plate.area.w, plate.area.h};
-        SDL_RenderFillRectF(m_renderer, &rf);
-        SDL_SetRenderDrawColor(m_renderer, 255, 230, 80, 100);
-        SDL_RenderDrawRectF(m_renderer, &rf);
+        float ppx = plate.area.x - m_camX, ppy = plate.area.y - m_camY;
+        float ppw = plate.area.w, pph = plate.area.h;
+        float glow = (std::sin(m_titleTimer * 5.f) + 1.f) * 0.5f;
+        if (plate.pressed) {
+            SDL_SetRenderDrawColor(m_renderer, 25, (Uint8)(145+65*glow), 45, 200);
+            SDL_FRect outer = {ppx-4.f, ppy-4.f, ppw+8.f, pph+8.f};
+            SDL_RenderFillRectF(m_renderer, &outer);
+            SDL_SetRenderDrawColor(m_renderer, 55, 225, 85, 255);
+            SDL_FRect rf = {ppx, ppy, ppw, pph};
+            SDL_RenderFillRectF(m_renderer, &rf);
+            SDL_SetRenderDrawColor(m_renderer, 150, 255, 170, 220);
+            SDL_RenderDrawRectF(m_renderer, &rf);
+            SDL_SetRenderDrawColor(m_renderer, 190, 255, 205, 220);
+            SDL_RenderDrawLineF(m_renderer, ppx+ppw*0.2f, ppy+pph*0.5f, ppx+ppw*0.8f, ppy+pph*0.5f);
+            SDL_RenderDrawLineF(m_renderer, ppx+ppw*0.5f, ppy+pph*0.12f, ppx+ppw*0.5f, ppy+pph*0.88f);
+        } else {
+            SDL_SetRenderDrawColor(m_renderer, 68, 70, 80, 210);
+            SDL_FRect rf = {ppx, ppy, ppw, pph};
+            SDL_RenderFillRectF(m_renderer, &rf);
+            SDL_SetRenderDrawColor(m_renderer, 100, 103, 118, 255);
+            SDL_RenderDrawRectF(m_renderer, &rf);
+            SDL_SetRenderDrawColor(m_renderer, 50, 52, 60, 210);
+            SDL_FRect inner = {ppx+3.f, ppy+3.f, ppw-6.f, pph-6.f};
+            SDL_RenderFillRectF(m_renderer, &inner);
+            SDL_SetRenderDrawColor(m_renderer, 90, 93, 108, 130);
+            SDL_RenderDrawLineF(m_renderer, ppx+ppw*0.2f, ppy+pph*0.5f, ppx+ppw*0.8f, ppy+pph*0.5f);
+            SDL_RenderDrawLineF(m_renderer, ppx+ppw*0.5f, ppy+pph*0.12f, ppx+ppw*0.5f, ppy+pph*0.88f);
+        }
     }
 
-    // Doors
+    // Doors — red+lock when closed, green slide-up animation when opening
     for (const auto& door : m_puzzle.doors) {
-        if (door.open) continue;
-        SDL_SetRenderDrawColor(m_renderer, 80, 50, 20, 240);
-        SDL_FRect rf = {door.area.x-m_camX, door.area.y-m_camY,
-                        door.area.w, door.area.h};
-        SDL_RenderFillRectF(m_renderer, &rf);
-        SDL_SetRenderDrawColor(m_renderer, 150, 100, 40, 255);
-        SDL_RenderDrawRectF(m_renderer, &rf);
+        float anim = door.openAnim;
+        if (anim >= 0.98f) continue;
+        float ddx  = door.area.x - m_camX;
+        float baseY = door.area.y - m_camY;
+        float ddw  = door.area.w;
+        float dh_vis = door.area.h * (1.f - anim);
+        float dy_vis = baseY + door.area.h * anim;  // top slides up
+        SDL_FRect rf = {ddx, dy_vis, ddw, dh_vis};
+        if (!door.open) {
+            float pulse = (std::sin(m_titleTimer * 3.f) + 1.f) * 0.5f;
+            SDL_SetRenderDrawColor(m_renderer, (Uint8)(155+45*pulse), 30, 30, 238);
+            SDL_RenderFillRectF(m_renderer, &rf);
+            SDL_SetRenderDrawColor(m_renderer, 255, 65, 45, 255);
+            SDL_RenderDrawRectF(m_renderer, &rf);
+            // Lock icon at door center
+            if (anim < 0.05f) {
+                float lx = ddx + ddw * 0.5f;
+                float ly = baseY + door.area.h * 0.5f;
+                SDL_SetRenderDrawColor(m_renderer, 218, 182, 68, 230);
+                SDL_FRect lockBody = {lx-7.f, ly, 14.f, 11.f};
+                SDL_RenderFillRectF(m_renderer, &lockBody);
+                SDL_SetRenderDrawColor(m_renderer, 238, 202, 88, 255);
+                SDL_RenderDrawLineF(m_renderer, lx-5.f, ly,    lx-5.f, ly-8.f);
+                SDL_RenderDrawLineF(m_renderer, lx-5.f, ly-8.f, lx+5.f, ly-8.f);
+                SDL_RenderDrawLineF(m_renderer, lx+5.f, ly-8.f, lx+5.f, ly);
+            }
+        } else {
+            Uint8 ga = (Uint8)(215 * (1.f - anim));
+            SDL_SetRenderDrawColor(m_renderer, 45, 195, 65, ga);
+            SDL_RenderFillRectF(m_renderer, &rf);
+            SDL_SetRenderDrawColor(m_renderer, 95, 250, 115, ga);
+            SDL_RenderDrawRectF(m_renderer, &rf);
+        }
     }
 
     // Base entrance
@@ -913,13 +969,24 @@ void Game::renderPlaying() {
         SDL_RenderFillRectF(m_renderer, &rf);
         SDL_SetRenderDrawColor(m_renderer, 80, 140, 255, (Uint8)(180 + 60 * pulse));
         SDL_RenderDrawRectF(m_renderer, &rf);
-        // Door frame
+        // Door frame top bar
         SDL_SetRenderDrawColor(m_renderer, 100, 120, 200, 200);
         SDL_FRect top = {bx - bw*0.5f, by - bh*0.5f, bw, 6.f};
         SDL_RenderFillRectF(m_renderer, &top);
     }
 
     SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
+
+    // "E키로 입장" label above base entrance
+    if (m_ui.getFont()) {
+        float bx2 = m_puzzle.baseEntrance.pos.x - m_camX;
+        float by2 = m_puzzle.baseEntrance.pos.y - m_camY;
+        float bh2 = m_puzzle.baseEntrance.h;
+        float labelA = 0.55f + 0.45f * std::sin(m_titleTimer * 2.5f);
+        SDL_Color lc = {130, 195, 255, (Uint8)(225 * labelA)};
+        m_ui.renderText(m_renderer, m_ui.getFont(), "E키로 입장",
+                        bx2, by2 - bh2 * 0.5f - 22.f, lc, true);
+    }
 
     // Earth emotional signs
     if (m_currentPlanet == 2 && m_ui.getFont()) {
@@ -956,34 +1023,59 @@ void Game::renderPlaying() {
         if (d.type == 0) {
             m_player.render(m_renderer, m_camX, m_camY);
         } else if (d.type == 1) {
+            // Part: yellow diamond star + sparkle particles
             const auto& pt = m_puzzle.parts[d.idx];
-            float bob = std::sin(pt.bobTimer * 2.5f) * 4.f;
-            float px = pt.pos.x - m_camX, py = pt.pos.y - m_camY + bob;
+            float bob  = std::sin(pt.bobTimer * 2.5f) * 4.f;
+            float ptx  = pt.pos.x - m_camX, pty = pt.pos.y - m_camY + bob;
+            float glw  = (std::sin(pt.bobTimer * 3.f) + 1.f) * 0.5f;
             SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
-            SDL_SetRenderDrawColor(m_renderer, 255, 200, 50, 60);
-            SDL_FRect glow = {px-14.f, py-14.f, 28.f, 28.f};
-            SDL_RenderFillRectF(m_renderer, &glow);
-            SDL_SetRenderDrawColor(m_renderer, 255, 220, 80, 255);
-            SDL_FRect core = {px-8.f, py-8.f, 16.f, 16.f};
-            SDL_RenderFillRectF(m_renderer, &core);
-            SDL_SetRenderDrawColor(m_renderer, 255, 255, 200, 255);
-            SDL_FRect inner = {px-4.f, py-4.f, 8.f, 8.f};
-            SDL_RenderFillRectF(m_renderer, &inner);
+            // Outer aura
+            SDL_SetRenderDrawColor(m_renderer, 255, 215, 40, (Uint8)(35 + 30*glw));
+            SDL_FRect aura = {ptx-18.f, pty-18.f, 36.f, 36.f};
+            SDL_RenderFillRectF(m_renderer, &aura);
+            // Diamond body
+            SDL_SetRenderDrawColor(m_renderer, 255, 210, 35, 255);
+            fillDiamond(m_renderer, ptx, pty, 10.f);
+            // Bright core
+            SDL_SetRenderDrawColor(m_renderer, 255, 255, 175, 255);
+            fillDiamond(m_renderer, ptx, pty, 4.f);
+            // Cross spikes
+            SDL_SetRenderDrawColor(m_renderer, 255, 238, 115, (Uint8)(175 + 70*glw));
+            SDL_RenderDrawLineF(m_renderer, ptx, pty-15.f, ptx, pty+15.f);
+            SDL_RenderDrawLineF(m_renderer, ptx-15.f, pty, ptx+15.f, pty);
+            // Orbiting sparkles
+            srand((int)(pt.bobTimer * 10) + d.idx * 7);
+            for (int sp = 0; sp < 4; sp++) {
+                float sa  = pt.bobTimer * 2.2f + sp * 1.5708f;
+                float sr  = 14.f + 4.f * std::sin(pt.bobTimer * 4.f + sp);
+                float spx = ptx + sr * std::cos(sa);
+                float spy = pty + sr * std::sin(sa);
+                Uint8 spa = (Uint8)(110 + 110 * std::sin(pt.bobTimer * 5.f + sp * 2.f));
+                SDL_SetRenderDrawColor(m_renderer, 255, 238, 95, spa);
+                SDL_FRect sdot = {spx-2.f, spy-2.f, 4.f, 4.f};
+                SDL_RenderFillRectF(m_renderer, &sdot);
+            }
             SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
         } else {
+            // Rock: brown circle + highlight + dark border
             const auto& rock = m_puzzle.rocks[d.idx];
-            float rx = rock.pos.x-m_camX, ry = rock.pos.y-m_camY;
+            float rx  = rock.pos.x - m_camX, ry = rock.pos.y - m_camY;
+            float rad = rock.radius;
             SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
-            SDL_SetRenderDrawColor(m_renderer, 0, 0, 0, 60);
-            SDL_FRect shadow = {rx-11.f, ry+8.f, 22.f, 8.f};
+            // Ellipse shadow
+            SDL_SetRenderDrawColor(m_renderer, 0, 0, 0, 55);
+            SDL_FRect shadow = {rx - rad + 4.f, ry + rad * 0.65f, (rad - 4.f)*2.f, rad * 0.45f};
             SDL_RenderFillRectF(m_renderer, &shadow);
+            // Dark border ring
+            SDL_SetRenderDrawColor(m_renderer, 70, 48, 28, 210);
+            fillCircle(m_renderer, rx, ry, rad + 1.5f);
+            // Rock body
+            SDL_SetRenderDrawColor(m_renderer, 115, 85, 55, 255);
+            fillCircle(m_renderer, rx, ry, rad);
+            // Highlight (top-left)
+            SDL_SetRenderDrawColor(m_renderer, 158, 122, 84, 200);
+            fillCircle(m_renderer, rx - rad*0.28f, ry - rad*0.28f, rad * 0.42f);
             SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
-            SDL_SetRenderDrawColor(m_renderer, 130, 110, 90, 255);
-            SDL_FRect rb = {rx-12.f, ry-12.f, 24.f, 24.f};
-            SDL_RenderFillRectF(m_renderer, &rb);
-            SDL_SetRenderDrawColor(m_renderer, 160, 140, 120, 255);
-            SDL_FRect hl = {rx-10.f, ry-10.f, 10.f, 8.f};
-            SDL_RenderFillRectF(m_renderer, &hl);
         }
     }
 
@@ -1032,6 +1124,22 @@ void Game::renderPlaying() {
             SDL_RenderDrawLineF(m_renderer, 0, sy2, len2, sy2 + (rand()%8 - 4));
         }
         SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
+    }
+
+    // Goal text (bottom center, above total parts HUD)
+    if (m_ui.getFont()) {
+        const char* goal = m_puzzle.warpGate.active
+            ? "기지로 돌아가 워프 게이트를 활성화하라!"
+            : "바위를 압력판에 올려 부품을 획득하라";
+        float gp = 0.65f + 0.35f * std::sin(m_titleTimer * 2.f);
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(m_renderer, 0, 0, 0, 115);
+        SDL_FRect goalBg = {m_screenW*0.5f-225.f, (float)m_screenH-58.f, 450.f, 26.f};
+        SDL_RenderFillRectF(m_renderer, &goalBg);
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
+        SDL_Color gc = {175, 210, 255, (Uint8)(195 * gp)};
+        m_ui.renderText(m_renderer, m_ui.getFont(), goal,
+                        m_screenW*0.5f, (float)m_screenH - 44.f, gc, true);
     }
 
     // HUD

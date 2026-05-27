@@ -19,6 +19,12 @@ void PuzzleSystem::update(float dt) {
     resolveRockVsRock();
     checkPlates();
 
+    // Animate door open/close
+    for (auto& door : doors) {
+        float target = door.open ? 1.f : 0.f;
+        door.openAnim += (target - door.openAnim) * 7.f * dt;
+    }
+
     for (auto& p : parts) {
         if (!p.collected) p.bobTimer += dt;
     }
