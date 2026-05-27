@@ -1,0 +1,14 @@
+# Build outputs
+build/
+
+# Dependencies (SDL2 binaries)
+deps/
+
+# Claude session files
+.claude/
+
+# IDE / OS
+.vscode/
+*.user
+Thumbs.db
+.DS_Store
