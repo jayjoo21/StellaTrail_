@@ -172,12 +172,47 @@ void Game::loadPlanet(int idx) {
     m_gimmickSpoken = false;
     m_stellaText.clear();
     m_stellaTimer = 0.f;
+    for (int i = 0; i < 3; i++) m_marsZoneShown[i] = false;
 
     m_map = TileMap();
     m_map.load(PLANET_MAPS[idx], m_renderer, "");
 
     m_puzzle = PuzzleSystem();
     m_puzzle.setPlanetPhysics(Planets::ALL[idx]);
+
+    // Mars: 3-zone puzzle — Zone1(tutorial), Zone2(dual-plate), Zone3(distance)
+    if (idx == 3) {
+        // Zone 1
+        m_puzzle.addRock(160.f, 596.f, 5.f);
+        m_puzzle.addPressurePlate(224.f, 572.f, 72.f, 32.f, 0);
+        m_puzzle.addDoor(320.f, 0.f, 32.f, 608.f);
+        // Zone 2
+        m_puzzle.addRock(384.f, 596.f, 5.f);
+        m_puzzle.addRock(544.f, 596.f, 5.f);
+        m_puzzle.addPressurePlate(464.f, 572.f, 64.f, 32.f, 1);
+        m_puzzle.addPressurePlate(608.f, 572.f, 64.f, 32.f, 1);
+        m_puzzle.addDoor(672.f, 0.f, 32.f, 608.f);
+        // Zone 3
+        m_puzzle.addRock(736.f, 596.f, 5.f);
+        m_puzzle.addPressurePlate(848.f, 572.f, 64.f, 32.f, 2);
+        m_puzzle.addDoor(960.f, 0.f, 32.f, 608.f);
+        // Parts
+        m_puzzle.addPart(368.f, 580.f);
+        m_puzzle.addPart(720.f, 580.f);
+        // Base
+        m_puzzle.setWarpGate(1096.f, 548.f);
+        m_puzzle.setBaseEntrance(1096.f, 548.f);
+        m_player.pos = {80.f, 548.f};
+        m_camX = m_camY = 0.f;
+        // Zone 1 entry hint
+        m_marsZoneShown[0] = true;
+        m_stellaText  = "바위를 밀어서 압력판에 올려봐";
+        m_stellaTimer = 5.f;
+        applyGimmickToPlayer();
+        int stage = std::min((m_totalPartsFound * 3) / TOTAL_PARTS, 3);
+        m_ui.setShipStage(stage);
+        return;
+    }
 
     const PlanetLayout& L = LAYOUTS[idx];
 
@@ -387,6 +422,20 @@ void Game::updatePlaying(float dt) {
             m_puzzle.activateWarpGate();
             m_ui.showPopup("기지로 돌아가 워프 게이트를 활성화하자!",
                            (float)(m_screenW/2), (float)(m_screenH - 120));
+        }
+    }
+
+    // Mars zone transition hints
+    if (m_currentPlanet == 3) {
+        if (!m_marsZoneShown[1] && m_player.pos.x > 354.f) {
+            m_marsZoneShown[1] = true;
+            m_stellaText  = "이번엔 두 개를 동시에 올려야 해!";
+            m_stellaTimer = 4.5f;
+        }
+        if (!m_marsZoneShown[2] && m_player.pos.x > 706.f) {
+            m_marsZoneShown[2] = true;
+            m_stellaText  = "마지막 구역... 끝까지 밀어붙여!";
+            m_stellaTimer = 4.5f;
         }
     }
 

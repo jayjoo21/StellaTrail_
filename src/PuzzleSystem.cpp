@@ -57,7 +57,6 @@ void PuzzleSystem::tickMercuryGimmick(float dt) {
 
 void PuzzleSystem::checkPlates() {
     for (auto& plate : plates) {
-        bool wasPressed = plate.pressed;
         plate.pressed = false;
         for (const auto& rock : rocks) {
             if (!rock.active) continue;
@@ -66,11 +65,17 @@ void PuzzleSystem::checkPlates() {
                 break;
             }
         }
-        if (plate.pressed != wasPressed && plate.linkedDoorId >= 0) {
-            int id = plate.linkedDoorId;
-            if (id < (int)doors.size())
-                doors[id].open = plate.pressed;
+    }
+    // Open a door only when ALL plates linked to it are pressed
+    for (int did = 0; did < (int)doors.size(); did++) {
+        bool anyLinked = false, allPressed = true;
+        for (const auto& plate : plates) {
+            if (plate.linkedDoorId == did) {
+                anyLinked = true;
+                if (!plate.pressed) allPressed = false;
+            }
         }
+        if (anyLinked) doors[did].open = allPressed;
     }
 }
 

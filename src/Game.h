@@ -62,6 +62,9 @@ private:
     float       m_stellaTimer   = 0.f;
     std::string m_stellaText;
 
+    // Mars 3-zone entry hints (zone 0 shown at load, 1-2 on crossing doors)
+    bool m_marsZoneShown[3] = {};
+
     // Base interior player position
     Vec2 m_basePlayerPos = {640.f, 550.f};
 
