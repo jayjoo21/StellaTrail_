@@ -182,19 +182,19 @@ void Game::loadPlanet(int idx) {
 
     // Mars: 3-zone puzzle — Zone1(tutorial), Zone2(dual-plate), Zone3(distance)
     if (idx == 3) {
-        // Zone 1
-        m_puzzle.addRock(160.f, 596.f, 5.f);
-        m_puzzle.addPressurePlate(224.f, 572.f, 72.f, 32.f, 0);
+        // Zone 1: 1 rock, plate extends right up to Door0 so overshoot = still on plate
+        m_puzzle.addRock(192.f, 596.f, 5.f);
+        m_puzzle.addPressurePlate(224.f, 572.f, 96.f, 32.f, 0);  // right edge = 320 = Door0
         m_puzzle.addDoor(320.f, 0.f, 32.f, 608.f);
-        // Zone 2
-        m_puzzle.addRock(384.f, 596.f, 5.f);
-        m_puzzle.addRock(544.f, 596.f, 5.f);
-        m_puzzle.addPressurePlate(464.f, 572.f, 64.f, 32.f, 1);
-        m_puzzle.addPressurePlate(608.f, 572.f, 64.f, 32.f, 1);
+        // Zone 2: 2 rocks on separate vertical tracks, plates extend to Door1
+        m_puzzle.addRock(480.f, 440.f, 5.f);  // upper track
+        m_puzzle.addRock(480.f, 596.f, 5.f);  // lower track
+        m_puzzle.addPressurePlate(576.f, 420.f, 96.f, 32.f, 1);  // upper, right edge = 672 = Door1
+        m_puzzle.addPressurePlate(576.f, 572.f, 96.f, 32.f, 1);  // lower, right edge = 672 = Door1
         m_puzzle.addDoor(672.f, 0.f, 32.f, 608.f);
-        // Zone 3
+        // Zone 3: 1 rock, longer push, plate extends to Door2
         m_puzzle.addRock(736.f, 596.f, 5.f);
-        m_puzzle.addPressurePlate(848.f, 572.f, 64.f, 32.f, 2);
+        m_puzzle.addPressurePlate(864.f, 572.f, 96.f, 32.f, 2);  // right edge = 960 = Door2
         m_puzzle.addDoor(960.f, 0.f, 32.f, 608.f);
         // Parts
         m_puzzle.addPart(368.f, 580.f);
@@ -310,9 +310,17 @@ void Game::handleEvents() {
 
         if (e.type == SDL_KEYDOWN) {
             auto sym = e.key.keysym.sym;
+            if (sym == SDLK_r && m_scene == Scene::Playing && !m_resetting) {
+                m_resetting = true;
+                m_resetFade = 0.f;
+                m_resetDone = false;
+            }
             if (sym == SDLK_ESCAPE) {
-                if (m_scene == Scene::Playing || m_scene == Scene::PlanetIntro)
+                if (m_scene == Scene::Playing || m_scene == Scene::PlanetIntro) {
+                    m_resetting = false;
+                    m_resetFade = 0.f;
                     m_scene = Scene::SolarMap;
+                }
                 else if (m_scene == Scene::BaseInterior) {
                     // Return to surface at base entrance
                     const PlanetLayout& L = LAYOUTS[m_currentPlanet];
@@ -392,6 +400,24 @@ void Game::updateIntro(float dt) {
 }
 
 void Game::updatePlaying(float dt) {
+    // R-key reset: fade out → reload → fade in
+    if (m_resetting) {
+        if (!m_resetDone) {
+            m_resetFade = std::min(m_resetFade + dt / 0.35f, 1.f);
+            if (m_resetFade >= 1.f) {
+                m_resetDone = true;
+                loadPlanet(m_currentPlanet);
+            }
+        } else {
+            m_resetFade = std::max(m_resetFade - dt / 0.35f, 0.f);
+            if (m_resetFade <= 0.f) {
+                m_resetting = false;
+                m_resetDone = false;
+            }
+        }
+        return;
+    }
+
     updateGimmicks(dt);
 
     auto walls = collectWalls();
@@ -1189,6 +1215,11 @@ void Game::renderPlaying() {
         SDL_Color gc = {175, 210, 255, (Uint8)(195 * gp)};
         m_ui.renderText(m_renderer, m_ui.getFont(), goal,
                         m_screenW*0.5f, (float)m_screenH - 44.f, gc, true);
+        // R: reset hint (bottom-right corner)
+        float rb = 0.5f + 0.5f * std::sin(m_titleTimer * 1.6f);
+        SDL_Color rc = {160, 160, 160, (Uint8)(95 + 55 * rb)};
+        m_ui.renderText(m_renderer, m_ui.getFont(), "R: 리셋",
+                        (float)m_screenW - 56.f, (float)m_screenH - 44.f, rc, true);
     }
 
     // HUD
@@ -1211,6 +1242,15 @@ void Game::renderPlaying() {
                 gimmickActive,
                 m_windWarning,
                 m_stellaText, stellaAlpha);
+
+    // Reset fade overlay (covers everything when R is pressed)
+    if (m_resetFade > 0.f) {
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(m_renderer, 0, 0, 0, (Uint8)(m_resetFade * 255.f));
+        SDL_FRect full = {0.f, 0.f, (float)m_screenW, (float)m_screenH};
+        SDL_RenderFillRectF(m_renderer, &full);
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
+    }
 }
 
 void Game::renderBaseInterior() {
