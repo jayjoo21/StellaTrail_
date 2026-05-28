@@ -2,7 +2,15 @@
 #include <cmath>
 #include <algorithm>
 
+void Player::startJump() {
+    jumpTimer    = JUMP_DURATION;
+    jumpCooldown = 1.0f;
+}
+
 void Player::update(float dt, const Uint8* keys, const std::vector<AABB>& walls) {
+    if (jumpTimer    > 0.f) jumpTimer    = std::max(0.f, jumpTimer    - dt);
+    if (jumpCooldown > 0.f) jumpCooldown = std::max(0.f, jumpCooldown - dt);
+
     Vec2 dir{};
     if (keys[SDL_SCANCODE_W] || keys[SDL_SCANCODE_UP])    dir.y -= 1.f;
     if (keys[SDL_SCANCODE_S] || keys[SDL_SCANCODE_DOWN])  dir.y += 1.f;
@@ -53,8 +61,22 @@ void Player::resolveWalls(Vec2& candidate, const std::vector<AABB>& walls) {
 }
 
 void Player::render(SDL_Renderer* r, float camX, float camY) {
+    float groundSY = pos.y - camY;
+    float jumpPhase = (jumpTimer > 0.f) ? (1.f - jumpTimer / JUMP_DURATION) : 0.f;
+    float jumpY     = (jumpTimer > 0.f) ? -13.f * std::sin(jumpPhase * 3.14159f) : 0.f;
+
     float sx = pos.x - camX;
-    float sy = pos.y - camY;
+    float sy = groundSY + jumpY;
+
+    // Shadow when airborne
+    if (jumpTimer > 0.f) {
+        float shadowFade = 0.6f + 0.4f * std::sin(jumpPhase * 3.14159f);
+        SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(r, 0, 0, 0, (Uint8)(70 * shadowFade));
+        SDL_FRect shad = {sx - 7.f, groundSY + 5.f, 14.f, 6.f};
+        SDL_RenderFillRectF(r, &shad);
+        SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
+    }
 
     // Body
     SDL_SetRenderDrawColor(r, 255, 220, 160, 255);

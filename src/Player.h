@@ -2,8 +2,9 @@
 #include "Physics.h"
 #include <SDL2/SDL.h>
 
-constexpr float PLAYER_SPEED = 120.f;
-constexpr float PLAYER_HALF  = 10.f;
+constexpr float PLAYER_SPEED  = 120.f;
+constexpr float PLAYER_HALF   = 10.f;
+constexpr float JUMP_DURATION = 0.28f;
 
 class Player {
 public:
@@ -15,9 +16,15 @@ public:
     Vec2  pushDir;
 
     // Gimmick modifiers — set by Game per-planet
-    float speedMult     = 1.0f;   // Jupiter: 0.7
-    float playerFriction= 1.0f;   // Saturn: 0.02
-    Vec2  externalVel   = {};     // Uranus drift, Neptune wind
+    float speedMult     = 1.0f;
+    float playerFriction= 1.0f;
+    Vec2  externalVel   = {};
+
+    // Jump state
+    float jumpTimer    = 0.f;   // counts down from JUMP_DURATION; >0 = airborne
+    float jumpCooldown = 0.f;   // 1s cooldown between jumps
+    bool  isAirborne() const { return jumpTimer > 0.f; }
+    void  startJump();
 
     void update(float dt, const Uint8* keys, const std::vector<AABB>& walls);
     void render(SDL_Renderer* r, float camX, float camY);

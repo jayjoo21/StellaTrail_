@@ -78,6 +78,14 @@ static const PlanetLayout LAYOUTS[8] = {
 
 static const int TOTAL_PARTS = 7*2 + 3;  // 17: 7 planets × 2 + Neptune × 3
 
+// Mars canyon bridge constants (shared by render + death logic)
+static const float MARS_CANYON_X[3]    = {320.f, 672.f, 960.f};
+static const float MARS_CANYON_W       = 32.f;
+static const float MARS_BRIDGE_UPPER_Y = 208.f;  // upper 1/3 of map height (640/3≈213)
+static const float MARS_BRIDGE_LOWER_Y = 432.f;  // lower 1/3 of map height (640*2/3≈427)
+static const float MARS_BRIDGE_SAFE    = 22.f;   // ±22px from bridge center = safe zone
+static const float MARS_BRIDGE_H       = 28.f;
+
 // Updated prologue (spec version)
 static const char* PROLOGUE[7] = {
     "...여기가 어디지?",
@@ -218,6 +226,14 @@ void Game::loadPlanet(int idx) {
         m_marsLogReading   = -1;
         m_marsArchiveOpen  = false;
         m_marsArchiveSel   = 0;
+
+        // Debug: print bridge positions
+        SDL_Log("[Mars] Canyon bridges generated:");
+        for (int ci = 0; ci < 3; ci++) {
+            SDL_Log("  Canyon %d (x=%.0f): upper bridge y=%.0f  lower bridge y=%.0f  safe zone +/-%.0f",
+                    ci, MARS_CANYON_X[ci], MARS_BRIDGE_UPPER_Y, MARS_BRIDGE_LOWER_Y, MARS_BRIDGE_SAFE);
+        }
+
         m_player.pos = {80.f, 548.f};
         m_camX = m_camY = 0.f;
         m_marsZoneShown[0] = true;
@@ -412,6 +428,30 @@ void Game::handleEvents() {
             if (sym == SDLK_r && m_scene == Scene::Playing
                 && m_currentPlanet == 0 && m_resetState == 0) {
                 m_resetState = 1;
+            }
+            // SPACE: jump (immune to ground hazards for JUMP_DURATION seconds)
+            if (sym == SDLK_SPACE && m_scene == Scene::Playing
+                && m_marsLogReading < 0 && m_deathState == 0
+                && m_player.jumpCooldown <= 0.f) {
+                // Can't jump if already on a death zone (already fallen)
+                bool onDanger = false;
+                if (m_currentPlanet == 0) {
+                    AABB pa = m_player.getAABB();
+                    for (const auto& crack : m_heatCracks)
+                        if (pa.intersects(crack)) { onDanger = true; break; }
+                }
+                if (m_currentPlanet == 3) {
+                    float pcx = m_player.pos.x, pcy = m_player.pos.y;
+                    for (int i = 0; i < 3 && !onDanger; i++) {
+                        if (i >= (int)m_puzzle.doors.size() || !m_puzzle.doors[i].open) continue;
+                        if (pcx >= MARS_CANYON_X[i] && pcx <= MARS_CANYON_X[i] + MARS_CANYON_W) {
+                            bool onUpper = std::abs(pcy - MARS_BRIDGE_UPPER_Y) <= MARS_BRIDGE_SAFE;
+                            bool onLower = std::abs(pcy - MARS_BRIDGE_LOWER_Y) <= MARS_BRIDGE_SAFE;
+                            if (!onUpper && !onLower) onDanger = true;
+                        }
+                    }
+                }
+                if (!onDanger) m_player.startJump();
             }
             if (sym == SDLK_e && m_scene == Scene::BaseInterior) {
                 if (m_marsArchiveOpen) {
@@ -696,7 +736,8 @@ void Game::updatePlaying(float dt) {
 
         if (m_puzzle.updateUnstablePlatforms(dt, m_player.getAABB())) {
             loseLife();
-        } else {
+        }
+        if (!m_player.isAirborne()) {
             AABB pa = m_player.getAABB();
             for (const auto& crack : m_heatCracks) {
                 if (pa.intersects(crack)) { loseLife(); break; }
@@ -704,16 +745,16 @@ void Game::updatePlaying(float dt) {
         }
     }
 
-    // Mars: canyon death (only in open gap, outside bridge safe zone)
-    if (m_currentPlanet == 3 && m_deathState == 0) {
-        static const float CANYON_X[] = {320.f, 672.f, 960.f};
-        static const float CANYON_W   = 32.f;
+    // Mars: canyon death — safe only on bridges, skip if airborne
+    if (m_currentPlanet == 3 && m_deathState == 0 && !m_player.isAirborne()) {
         float pcx = m_player.pos.x;
         float pcy = m_player.pos.y;
         for (int i = 0; i < 3 && i < (int)m_puzzle.doors.size(); i++) {
             if (!m_puzzle.doors[i].open) continue;
-            if (pcx >= CANYON_X[i] && pcx <= CANYON_X[i] + CANYON_W) {
-                if (pcy < 520.f || pcy > 580.f) { loseLife(); break; }
+            if (pcx >= MARS_CANYON_X[i] && pcx <= MARS_CANYON_X[i] + MARS_CANYON_W) {
+                bool onUpper = std::abs(pcy - MARS_BRIDGE_UPPER_Y) <= MARS_BRIDGE_SAFE;
+                bool onLower = std::abs(pcy - MARS_BRIDGE_LOWER_Y) <= MARS_BRIDGE_SAFE;
+                if (!onUpper && !onLower) { loseLife(); break; }
             }
         }
     }
@@ -1295,23 +1336,26 @@ void Game::renderPlaying() {
             }
         }
 
-        // 협곡 돌다리 (항상 존재, 문 열림 시 통과 가능)
+        // 협곡 돌다리: 각 협곡마다 상단 1/3, 하단 1/3 지점에 1개씩, 총 2개
+        static const float BRIDGE_CENTERS[] = {MARS_BRIDGE_UPPER_Y, MARS_BRIDGE_LOWER_Y};
         for (int ci = 0; ci < 3; ci++) {
-            bool passable = (ci < (int)m_puzzle.doors.size()) &&
-                            (m_puzzle.doors[ci].open || m_puzzle.doors[ci].openAnim > 0.02f);
-            if (!passable) continue;
             float bwx = CANYON_WORLD_X[ci] - m_camX;
-            float bwy = 532.f - m_camY;
-            SDL_SetRenderDrawColor(m_renderer, 90, 78, 65, 245);
-            SDL_FRect bridge = {bwx, bwy, 32.f, 28.f};
-            SDL_RenderFillRectF(m_renderer, &bridge);
-            SDL_SetRenderDrawColor(m_renderer, 68, 57, 46, 200);
-            for (float ly = bwy + 8.f; ly < bwy + 28.f; ly += 9.f)
-                SDL_RenderDrawLineF(m_renderer, bwx + 2.f, ly, bwx + 30.f, ly);
-            SDL_SetRenderDrawColor(m_renderer, 120, 108, 92, 230);
-            SDL_RenderDrawLineF(m_renderer, bwx, bwy, bwx + 32.f, bwy);
-            SDL_SetRenderDrawColor(m_renderer, 50, 42, 34, 210);
-            SDL_RenderDrawRectF(m_renderer, &bridge);
+            for (float bcy : BRIDGE_CENTERS) {
+                float bwy = bcy - MARS_BRIDGE_H * 0.5f - m_camY;
+                SDL_SetRenderDrawColor(m_renderer, 88, 76, 62, 248);
+                SDL_FRect bridge = {bwx, bwy, MARS_CANYON_W, MARS_BRIDGE_H};
+                SDL_RenderFillRectF(m_renderer, &bridge);
+                // Stone texture lines
+                SDL_SetRenderDrawColor(m_renderer, 66, 55, 43, 200);
+                for (float ly = bwy + 8.f; ly < bwy + MARS_BRIDGE_H; ly += 9.f)
+                    SDL_RenderDrawLineF(m_renderer, bwx + 2.f, ly, bwx + MARS_CANYON_W - 2.f, ly);
+                // Top highlight
+                SDL_SetRenderDrawColor(m_renderer, 118, 104, 88, 230);
+                SDL_RenderDrawLineF(m_renderer, bwx, bwy, bwx + MARS_CANYON_W, bwy);
+                // Border
+                SDL_SetRenderDrawColor(m_renderer, 48, 40, 30, 215);
+                SDL_RenderDrawRectF(m_renderer, &bridge);
+            }
         }
 
         // 협곡 근처 화면 가장자리 붉은 열기 효과
