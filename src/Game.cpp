@@ -219,6 +219,8 @@ void Game::loadPlanet(int idx) {
         m_player.pos = {80.f, 548.f};
         m_camX = m_camY = 0.f;
         m_marsZoneShown[0] = true;
+        m_marsZoneTextIdx   = 0;
+        m_marsZoneTextTimer = 4.f;
         m_stellaText  = "바위를 밀어서 압력판에 올려봐";
         m_stellaTimer = 5.f;
         applyGimmickToPlayer();
@@ -362,10 +364,12 @@ void Game::handleEvents() {
 
         if (e.type == SDL_KEYDOWN) {
             auto sym = e.key.keysym.sym;
-            if (sym == SDLK_e && m_scene == Scene::Playing) {
-                if (m_marsLogReading >= 0) {
-                    m_marsLogReading = -1;
-                } else if (m_grabbedRock >= 0) {
+            if ((sym == SDLK_RETURN || sym == SDLK_e) && m_scene == Scene::Playing
+                && m_marsLogReading >= 0) {
+                m_marsLogReading = -1;
+            }
+            if (sym == SDLK_e && m_scene == Scene::Playing && m_marsLogReading < 0) {
+                if (m_grabbedRock >= 0) {
                     m_grabbedRock = -1;
                 } else {
                     m_grabbedRock = tryGrabRock();
@@ -492,7 +496,10 @@ void Game::updatePlaying(float dt) {
     updateGimmicks(dt);
 
     auto walls = collectWalls();
-    const Uint8* keys = SDL_GetKeyboardState(nullptr);
+    // Block all player input while a log popup is open
+    static const Uint8 s_zeroKeys[512] = {};
+    bool logOpen = (m_currentPlanet == 3 && m_marsLogReading >= 0);
+    const Uint8* keys = logOpen ? s_zeroKeys : SDL_GetKeyboardState(nullptr);
     m_player.update(dt, keys, walls);
 
     // Grabbed rock follows player at fixed offset
@@ -576,14 +583,19 @@ void Game::updatePlaying(float dt) {
     if (m_currentPlanet == 3) {
         if (!m_marsZoneShown[1] && m_player.pos.x > 354.f) {
             m_marsZoneShown[1] = true;
+            m_marsZoneTextIdx   = 1;
+            m_marsZoneTextTimer = 4.f;
             m_stellaText  = "이번엔 당겨야 해! E키로 바위를 잡아봐";
             m_stellaTimer = 5.f;
         }
         if (!m_marsZoneShown[2] && m_player.pos.x > 706.f) {
             m_marsZoneShown[2] = true;
+            m_marsZoneTextIdx   = 2;
+            m_marsZoneTextTimer = 4.f;
             m_stellaText  = "밀기+당기기 조합으로 풀어야 해!";
             m_stellaTimer = 4.5f;
         }
+        if (m_marsZoneTextTimer > 0.f) m_marsZoneTextTimer -= dt;
         for (int i = 0; i < 5; i++) {
             if (m_marsRockFlash[i] > 0.f)
                 m_marsRockFlash[i] = std::max(0.f, m_marsRockFlash[i] - dt * 2.f);
@@ -1074,6 +1086,94 @@ void Game::renderPlaying() {
         }
     }
 
+    // Mars: 붉은 협곡 시각화
+    if (m_currentPlanet == 3) {
+        static const float CANYON_WORLD_X[] = {320.f, 672.f, 960.f};
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
+
+        for (float cwx : CANYON_WORLD_X) {
+            float sx = cwx - m_camX;
+            float sh = (float)m_screenH;
+
+            // 협곡 깊이 (중앙 검정 → 가장자리 어두운 붉은색)
+            for (int layer = 0; layer < 10; layer++) {
+                float t   = (float)layer / 9.f;          // 0=center, 1=edge
+                float hw  = 6.f + 30.f * t;              // center narrow → edge wide
+                Uint8 rv  = (Uint8)(80.f  * t);
+                Uint8 gv  = (Uint8)(6.f   * t);
+                Uint8 bv  = (Uint8)(4.f   * t);
+                Uint8 av  = (Uint8)(230.f - 30.f * t);
+                SDL_SetRenderDrawColor(m_renderer, rv, gv, bv, av);
+                SDL_FRect strip = {sx - hw, 0.f, hw * 2.f, sh};
+                SDL_RenderFillRectF(m_renderer, &strip);
+            }
+
+            // 바위 질감 가장자리 (왼/오른 각 8px)
+            for (int ry2 = 0; ry2 < (int)sh; ry2 += 16) {
+                float noise = std::sin(ry2 * 0.4f + cwx * 0.05f) * 4.f;
+                Uint8 tc = (Uint8)(55 + 30 * std::sin(ry2 * 0.25f));
+                SDL_SetRenderDrawColor(m_renderer, tc, (Uint8)(tc * 0.3f), (Uint8)(tc * 0.2f), 200);
+                SDL_FRect lrk = {sx - 38.f + noise, (float)ry2, 10.f, 8.f};
+                SDL_FRect rrk = {sx + 28.f - noise, (float)ry2, 10.f, 8.f};
+                SDL_RenderFillRectF(m_renderer, &lrk);
+                SDL_RenderFillRectF(m_renderer, &rrk);
+            }
+
+            // 용암 흐름 파티클 (아래로)
+            srand((int)(m_titleTimer * 18) ^ (int)cwx);
+            for (int p = 0; p < 18; p++) {
+                float speed = 40.f + (rand() % 40);
+                float py2   = std::fmod(m_titleTimer * speed + p * 37.f, sh + 20.f) - 10.f;
+                float px2   = sx - 10.f + (float)(rand() % 21);
+                float br    = (float)(rand() % 100) / 100.f;
+                Uint8 pr2   = (Uint8)(180 + 70 * br);
+                Uint8 pg    = (Uint8)(50  + 50 * br);
+                Uint8 pa2   = (Uint8)(120 + 80 * br);
+                SDL_SetRenderDrawColor(m_renderer, pr2, pg, 10, pa2);
+                SDL_FRect dot = {px2, py2, 3.f, 4.f};
+                SDL_RenderFillRectF(m_renderer, &dot);
+            }
+
+            // 협곡 가장자리 열기 파티클 (위로)
+            srand((int)(m_titleTimer * 22) ^ (int)cwx ^ 999);
+            for (int p = 0; p < 10; p++) {
+                float speed = 30.f + (rand() % 25);
+                float py2   = sh - std::fmod(m_titleTimer * speed + p * 64.f, sh + 30.f);
+                float ex    = sx - 34.f + (float)(rand() % 6);
+                Uint8 ea    = (Uint8)(40 + 60 * std::sin(m_titleTimer * 4.f + p));
+                SDL_SetRenderDrawColor(m_renderer, 220, 60, 20, ea);
+                SDL_FRect edL = {ex, py2, 2.f, 2.f};
+                SDL_RenderFillRectF(m_renderer, &edL);
+                ex = sx + 32.f + (float)(rand() % 6);
+                SDL_FRect edR = {ex, py2, 2.f, 2.f};
+                SDL_RenderFillRectF(m_renderer, &edR);
+            }
+        }
+
+        // 협곡 근처 화면 가장자리 붉은 열기 효과
+        float nearDist = 9999.f;
+        for (float cwx : CANYON_WORLD_X) {
+            float d = std::abs(m_player.pos.x - (cwx + 16.f));
+            if (d < nearDist) nearDist = d;
+        }
+        if (nearDist < 200.f) {
+            float intensity = 1.f - nearDist / 200.f;
+            Uint8 ea2 = (Uint8)(60 * intensity * (0.7f + 0.3f * std::sin(m_titleTimer * 3.f)));
+            SDL_SetRenderDrawColor(m_renderer, 180, 30, 10, ea2);
+            const float ew = 80.f;
+            SDL_FRect left  = {0.f,                           0.f, ew, (float)m_screenH};
+            SDL_FRect right = {(float)m_screenW - ew,         0.f, ew, (float)m_screenH};
+            SDL_FRect top   = {0.f, 0.f,                           (float)m_screenW, ew * 0.6f};
+            SDL_FRect bot   = {0.f, (float)m_screenH - ew * 0.6f, (float)m_screenW, ew * 0.6f};
+            SDL_RenderFillRectF(m_renderer, &left);
+            SDL_RenderFillRectF(m_renderer, &right);
+            SDL_RenderFillRectF(m_renderer, &top);
+            SDL_RenderFillRectF(m_renderer, &bot);
+        }
+
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
+    }
+
     // Saturn floor shimmer
     if (curPhysics().gimmick == PlanetGimmick::Slippery) {
         float shimmer = (std::sin(m_titleTimer * 4.f) + 1.f) * 0.5f;
@@ -1115,9 +1215,11 @@ void Game::renderPlaying() {
     }
 
     // Doors — red+lock when closed, green slide-up animation when opening
+    // Mars: doors ARE the canyon walls — only draw the "opening" slide, not the closed look
     for (const auto& door : m_puzzle.doors) {
         float anim = door.openAnim;
         if (anim >= 0.98f) continue;
+        if (m_currentPlanet == 3 && !door.open) continue;  // closed Mars doors = canyon, already drawn
         float ddx  = door.area.x - m_camX;
         float baseY = door.area.y - m_camY;
         float ddw  = door.area.w;
@@ -1530,8 +1632,33 @@ void Game::renderPlaying() {
             pos2 = nl + 1;
         }
         float blink = 0.55f + 0.45f * std::sin(m_titleTimer * 4.5f);
-        m_ui.renderText(m_renderer, m_ui.getFont(), "[ E: 닫기 ]",
+        m_ui.renderText(m_renderer, m_ui.getFont(), "[ ENTER로 닫기 ]",
                         m_screenW * 0.5f, oy + 172.f, {180, 255, 200, (Uint8)(220 * blink)}, true);
+    }
+
+    // Mars: 구역 표시 텍스트 (페이드인 → 유지 → 페이드아웃)
+    if (m_currentPlanet == 3 && m_marsZoneTextIdx >= 0
+        && m_marsZoneTextTimer > 0.f && m_ui.getFontBig()) {
+        static const char* ZONE_NAMES[] = {
+            "구역 1  -  착륙 지점",
+            "구역 2  -  탐사 구역",
+            "구역 3  -  워프 게이트 구역"
+        };
+        float t = m_marsZoneTextTimer;
+        float alpha;
+        if      (t > 3.5f) alpha = (4.f - t) / 0.5f;   // 0.5s 페이드인
+        else if (t > 1.5f) alpha = 1.f;                  // 2s 유지
+        else               alpha = t / 1.5f;              // 1.5s 페이드아웃
+
+        Uint8 a = (Uint8)(230.f * alpha);
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(m_renderer, 0, 0, 0, (Uint8)(120.f * alpha));
+        SDL_FRect bg = {m_screenW * 0.5f - 220.f, 58.f, 440.f, 38.f};
+        SDL_RenderFillRectF(m_renderer, &bg);
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
+        m_ui.renderText(m_renderer, m_ui.getFontBig(),
+                        ZONE_NAMES[m_marsZoneTextIdx],
+                        m_screenW * 0.5f, 68.f, {255, 160, 80, a}, true);
     }
 }
 

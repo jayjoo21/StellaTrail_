@@ -63,7 +63,9 @@ private:
     std::string m_stellaText;
 
     // Mars 3-zone entry hints (zone 0 shown at load, 1-2 on crossing doors)
-    bool m_marsZoneShown[3] = {};
+    bool  m_marsZoneShown[3]   = {};
+    int   m_marsZoneTextIdx    = -1;  // 0/1/2 = zone being displayed
+    float m_marsZoneTextTimer  = 0.f; // counts down from 4.0s
 
     // E-key rock grab/pull state
     int   m_grabbedRock = -1;
