@@ -207,6 +207,15 @@ void Game::loadPlanet(int idx) {
         m_puzzle.addPart(714.f, 580.f);
         m_puzzle.setWarpGate(1096.f, 548.f);
         m_puzzle.setBaseEntrance(1096.f, 548.f);
+        // Log files (glowing data chips)
+        m_puzzle.addLogFile(160.f, 350.f, 0);
+        m_puzzle.addLogFile(490.f, 300.f, 1);
+        m_puzzle.addLogFile(780.f, 250.f, 2);
+        // Reset Mars log state
+        for (int i = 0; i < 3; i++) m_marsLogsCollected[i] = false;
+        m_marsLogReading   = -1;
+        m_marsArchiveOpen  = false;
+        m_marsArchiveSel   = 0;
         m_player.pos = {80.f, 548.f};
         m_camX = m_camY = 0.f;
         m_marsZoneShown[0] = true;
@@ -233,6 +242,19 @@ void Game::loadPlanet(int idx) {
     // Warp gate stored but used in base interior (position unused on surface)
     m_puzzle.setWarpGate(L.baseEntrX, L.baseEntrY);
     m_puzzle.setBaseEntrance(L.baseEntrX, L.baseEntrY);
+
+    // Mercury: energy cells + save initial rock positions for R-reset
+    if (idx == 0) {
+        m_puzzle.addEnergyCell(192.f, 160.f);
+        m_puzzle.addEnergyCell(576.f, 192.f);
+        m_puzzle.addEnergyCell(896.f, 160.f);
+        m_initialRockPos.clear();
+        for (const auto& rock : m_puzzle.rocks)
+            m_initialRockPos.push_back(rock.pos);
+        m_energyCellsFound = 0;
+        m_resetFade  = 0.f;
+        m_resetState = 0;
+    }
 
     m_player.pos = {L.startX, L.startY};
     m_camX = m_camY = 0.f;
@@ -263,6 +285,32 @@ void Game::applyGimmickToPlayer() {
 
 void Game::onPlanetCleared() {
     m_solarMap.setPlanetCleared(m_currentPlanet);
+
+    // Mercury: energy cells determine how many planets to unlock
+    if (m_currentPlanet == 0) {
+        // VISIT_ORDER: {3,0,1,2,4,5,6,7} — Mercury is index 1, next is Venus(1), Earth(2), Jupiter(4)
+        int unlockCount = std::max(1, m_energyCellsFound);
+        for (int u = 0; u < unlockCount && u < 3; u++) {
+            int nextVisitIdx = 2 + u;  // positions 2,3,4 in VISIT_ORDER
+            if (nextVisitIdx < Planets::COUNT)
+                m_solarMap.setPlanetUnlocked(Planets::VISIT_ORDER[nextVisitIdx]);
+        }
+        for (int v = 0; v < Planets::COUNT; v++) {
+            if (Planets::VISIT_ORDER[v] == m_currentPlanet) {
+                m_visitProgress = v + 1;
+                break;
+            }
+        }
+        if (m_visitProgress >= Planets::COUNT) {
+            m_scene = Scene::Ending;
+            m_endingTimer = 0.f;
+        } else {
+            m_warpTimer = 0.f;
+            m_scene = Scene::WarpActivation;
+        }
+        return;
+    }
+
     for (int v = 0; v < Planets::COUNT; v++) {
         if (Planets::VISIT_ORDER[v] == m_currentPlanet) {
             m_visitProgress = v + 1;
@@ -315,14 +363,22 @@ void Game::handleEvents() {
         if (e.type == SDL_KEYDOWN) {
             auto sym = e.key.keysym.sym;
             if (sym == SDLK_e && m_scene == Scene::Playing) {
-                if (m_grabbedRock >= 0) {
+                if (m_marsLogReading >= 0) {
+                    m_marsLogReading = -1;
+                } else if (m_grabbedRock >= 0) {
                     m_grabbedRock = -1;
                 } else {
                     m_grabbedRock = tryGrabRock();
                 }
             }
+            if (sym == SDLK_r && m_scene == Scene::Playing
+                && m_currentPlanet == 0 && m_resetState == 0) {
+                m_resetState = 1;
+            }
             if (sym == SDLK_e && m_scene == Scene::BaseInterior) {
-                if (m_baseReadingBoard) {
+                if (m_marsArchiveOpen) {
+                    m_marsArchiveOpen = false;
+                } else if (m_baseReadingBoard) {
                     m_baseReadingBoard = false;
                 } else {
                     // Check warp gate proximity (E to warp)
@@ -331,6 +387,15 @@ void Game::handleEvents() {
                         m_puzzle.warpGate.triggered = true;
                         onPlanetCleared();
                         return;
+                    }
+                    // Mars: archive panel (right side)
+                    if (m_currentPlanet == 3) {
+                        AABB archiveProbe = {960.f, 100.f, 280.f, 260.f};
+                        if (m_player.getAABB().intersects(archiveProbe)) {
+                            int collected = 0;
+                            for (int i = 0; i < 3; i++) if (m_marsLogsCollected[i]) collected++;
+                            if (collected > 0) { m_marsArchiveOpen = true; m_marsArchiveSel = 0; }
+                        }
                     }
                     // Check warning board proximity (E to read)
                     AABB boardProbe = {42.f, 100.f, 290.f, 260.f};
@@ -466,6 +531,44 @@ void Game::updatePlaying(float dt) {
             m_puzzle.activateWarpGate();
             m_ui.showPopup("기지로 돌아가 워프 게이트를 활성화하자!",
                            (float)(m_screenW/2), (float)(m_screenH - 120));
+        }
+    }
+
+    // Mars: collect log files
+    if (m_currentPlanet == 3) {
+        int logId = m_puzzle.tryCollectLog(m_player.getAABB());
+        if (logId >= 0 && logId < 3 && !m_marsLogsCollected[logId]) {
+            m_marsLogsCollected[logId] = true;
+            m_marsLogReading = logId;
+        }
+    }
+
+    // Mercury: collect energy cells + handle R-reset fade
+    if (m_currentPlanet == 0) {
+        int cellIdx = m_puzzle.tryCollectCell(m_player.getAABB());
+        if (cellIdx >= 0) {
+            m_energyCellsFound++;
+            m_ui.showPopup("에너지 셀 획득!", (float)(m_screenW/2), (float)(m_screenH - 120));
+        }
+
+        // Reset state machine: 1=fade out, 2=restore+fade in
+        if (m_resetState == 1) {
+            m_resetFade += dt * 3.f;
+            if (m_resetFade >= 1.f) {
+                m_resetFade = 1.f;
+                // Restore rocks to initial positions
+                for (int i = 0; i < (int)m_puzzle.rocks.size() && i < (int)m_initialRockPos.size(); i++) {
+                    m_puzzle.rocks[i].pos = m_initialRockPos[i];
+                    m_puzzle.rocks[i].vel = {};
+                }
+                m_resetState = 2;
+            }
+        } else if (m_resetState == 2) {
+            m_resetFade -= dt * 3.f;
+            if (m_resetFade <= 0.f) {
+                m_resetFade  = 0.f;
+                m_resetState = 0;
+            }
         }
     }
 
@@ -1107,6 +1210,12 @@ void Game::renderPlaying() {
     for (int i = 0; i < (int)m_puzzle.rocks.size(); i++)
         if (m_puzzle.rocks[i].active)
             dlist.push_back({m_puzzle.rocks[i].pos.y, 2, i});
+    for (int i = 0; i < (int)m_puzzle.logFiles.size(); i++)
+        if (!m_puzzle.logFiles[i].collected)
+            dlist.push_back({m_puzzle.logFiles[i].pos.y, 3, i});
+    for (int i = 0; i < (int)m_puzzle.energyCells.size(); i++)
+        if (!m_puzzle.energyCells[i].collected)
+            dlist.push_back({m_puzzle.energyCells[i].pos.y, 4, i});
     std::sort(dlist.begin(), dlist.end(),
               [](const Drawable& a, const Drawable& b){ return a.y < b.y; });
 
@@ -1156,7 +1265,7 @@ void Game::renderPlaying() {
                 SDL_RenderFillRectF(m_renderer, &sdot);
             }
             SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
-        } else {
+        } else if (d.type == 2) {
             // Rock: brown circle + highlight + dark border
             const auto& rock = m_puzzle.rocks[d.idx];
             float rx  = rock.pos.x - m_camX, ry = rock.pos.y - m_camY;
@@ -1187,6 +1296,62 @@ void Game::renderPlaying() {
                 SDL_SetRenderDrawColor(m_renderer, 255, 255, 200, fa);
                 fillCircle(m_renderer, rx, ry, rad + 6.f);
             }
+            // Mercury direction arrow on rock
+            if (m_currentPlanet == 0) {
+                bool warn = m_puzzle.mercuryWarning;
+                float arAlpha = warn ? (0.5f + 0.5f * std::sin(m_titleTimer * 10.f)) : 1.f;
+                Uint8 aa = (Uint8)(200 * arAlpha);
+                bool goLeft = m_puzzle.mercuryGoingLeft;
+                SDL_SetRenderDrawColor(m_renderer, 255, 200, 50, aa);
+                // Arrow shaft
+                float ax1 = goLeft ? rx + 8.f  : rx - 8.f;
+                float ax2 = goLeft ? rx - 8.f  : rx + 8.f;
+                SDL_RenderDrawLineF(m_renderer, ax1, ry, ax2, ry);
+                // Arrow head
+                float hx2 = ax2, hy2 = ry;
+                float dx2 = goLeft ? -4.f : 4.f;
+                SDL_RenderDrawLineF(m_renderer, hx2, hy2, hx2 - dx2, hy2 - 4.f);
+                SDL_RenderDrawLineF(m_renderer, hx2, hy2, hx2 - dx2, hy2 + 4.f);
+            }
+            SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
+        } else if (d.type == 3) {
+            // Log file: green data chip + glow
+            const auto& lf = m_puzzle.logFiles[d.idx];
+            float bob = std::sin(lf.bobTimer * 2.8f) * 3.f;
+            float lfx = lf.pos.x - m_camX, lfy = lf.pos.y - m_camY + bob;
+            float glw = (std::sin(lf.bobTimer * 3.5f) + 1.f) * 0.5f;
+            SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
+            SDL_SetRenderDrawColor(m_renderer, 40, 255, 120, (Uint8)(30 + 40 * glw));
+            SDL_FRect aura = {lfx - 18.f, lfy - 18.f, 36.f, 36.f};
+            SDL_RenderFillRectF(m_renderer, &aura);
+            SDL_SetRenderDrawColor(m_renderer, 20, 50, 30, 220);
+            SDL_FRect chip = {lfx - 10.f, lfy - 8.f, 20.f, 16.f};
+            SDL_RenderFillRectF(m_renderer, &chip);
+            SDL_SetRenderDrawColor(m_renderer, 50, 220, 100, 255);
+            SDL_RenderDrawRectF(m_renderer, &chip);
+            SDL_SetRenderDrawColor(m_renderer, 80, 255, 150, (Uint8)(160 + 80 * glw));
+            SDL_FRect dot1 = {lfx - 5.f, lfy - 3.f, 4.f, 4.f};
+            SDL_FRect dot2 = {lfx + 2.f, lfy - 3.f, 4.f, 4.f};
+            SDL_RenderFillRectF(m_renderer, &dot1);
+            SDL_RenderFillRectF(m_renderer, &dot2);
+            SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
+        } else if (d.type == 4) {
+            // Energy cell: blue crystal + glow
+            const auto& ec = m_puzzle.energyCells[d.idx];
+            float bob = std::sin(ec.bobTimer * 3.2f) * 3.f;
+            float ecx = ec.pos.x - m_camX, ecy = ec.pos.y - m_camY + bob;
+            float glw = (std::sin(ec.bobTimer * 4.f) + 1.f) * 0.5f;
+            SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
+            SDL_SetRenderDrawColor(m_renderer, 60, 160, 255, (Uint8)(30 + 50 * glw));
+            SDL_FRect aura = {ecx - 20.f, ecy - 20.f, 40.f, 40.f};
+            SDL_RenderFillRectF(m_renderer, &aura);
+            // Crystal diamond shape
+            SDL_SetRenderDrawColor(m_renderer, 30, 100, 220, 240);
+            fillDiamond(m_renderer, ecx, ecy, 10.f);
+            SDL_SetRenderDrawColor(m_renderer, 120, 200, 255, (Uint8)(180 + 70 * glw));
+            fillDiamond(m_renderer, ecx, ecy, 5.f);
+            SDL_SetRenderDrawColor(m_renderer, 200, 235, 255, 255);
+            fillDiamond(m_renderer, ecx, ecy, 2.f);
             SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
         }
     }
@@ -1287,6 +1452,87 @@ void Game::renderPlaying() {
                 gimmickActive,
                 m_windWarning,
                 m_stellaText, stellaAlpha);
+
+    // Mercury-specific UI
+    if (m_currentPlanet == 0) {
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
+
+        // Warning particles before phase switch
+        if (m_puzzle.mercuryWarning) {
+            srand((int)(m_titleTimer * 20));
+            for (int i = 0; i < 12; i++) {
+                float px2 = (float)(rand() % m_screenW);
+                float py2 = (float)(rand() % m_screenH);
+                Uint8 wa = (Uint8)(60 + 80 * std::sin(m_titleTimer * 8.f + i));
+                SDL_SetRenderDrawColor(m_renderer, 255, 160, 50, wa);
+                SDL_FRect wd = {px2 - 2.f, py2 - 2.f, 4.f, 4.f};
+                SDL_RenderFillRectF(m_renderer, &wd);
+            }
+        }
+
+        // Reset fade overlay
+        if (m_resetFade > 0.f) {
+            SDL_SetRenderDrawColor(m_renderer, 0, 0, 0, (Uint8)(255 * m_resetFade));
+            SDL_FRect full = {0.f, 0.f, (float)m_screenW, (float)m_screenH};
+            SDL_RenderFillRectF(m_renderer, &full);
+        }
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
+
+        // "R: 재시작" hint bottom-right
+        if (m_ui.getFont() && m_resetState == 0) {
+            SDL_Color rc = {180, 180, 200, 190};
+            m_ui.renderText(m_renderer, m_ui.getFont(), "R: 재시작",
+                            (float)m_screenW - 60.f, (float)m_screenH - 28.f, rc, true);
+        }
+        // Energy cell count display
+        if (m_ui.getFont()) {
+            char cellBuf[32];
+            std::snprintf(cellBuf, sizeof(cellBuf), "에너지 셀: %d/3", m_energyCellsFound);
+            SDL_Color cc = {100, 200, 255, 220};
+            m_ui.renderText(m_renderer, m_ui.getFont(), cellBuf,
+                            (float)m_screenW - 70.f, (float)m_screenH - 50.f, cc, true);
+        }
+    }
+
+    // Mars log reading overlay
+    if (m_currentPlanet == 3 && m_marsLogReading >= 0 && m_ui.getFont()) {
+        static const char* LOG_TEXTS[3] = {
+            "탐사대 기록 #001\n우리는 이 게이트를 발견했다.\n고대 문명의 것이 분명하다.",
+            "탐사대 기록 #002\n게이트 작동 원리를 파악했다.\n부품만 있으면 어디든 갈 수 있어.",
+            "탐사대 기록 #003\n우리 중 한 명이 사라졌다.\n게이트가... 뭔가 이상해."
+        };
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(m_renderer, 0, 0, 0, 180);
+        SDL_FRect dim = {0.f, 0.f, (float)m_screenW, (float)m_screenH};
+        SDL_RenderFillRectF(m_renderer, &dim);
+        float ox = m_screenW * 0.5f - 260.f, oy = m_screenH * 0.5f - 100.f;
+        SDL_SetRenderDrawColor(m_renderer, 8, 20, 12, 250);
+        SDL_FRect popup = {ox, oy, 520.f, 200.f};
+        SDL_RenderFillRectF(m_renderer, &popup);
+        SDL_SetRenderDrawColor(m_renderer, 50, 200, 100, 230);
+        SDL_RenderDrawRectF(m_renderer, &popup);
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
+        // Title
+        m_ui.renderText(m_renderer, m_ui.getFont(), "데이터 칩",
+                        m_screenW * 0.5f, oy + 20.f, {80, 240, 130, 240}, true);
+        // Log text (split by \n manually — render 3 lines)
+        const char* txt = LOG_TEXTS[m_marsLogReading];
+        std::string s(txt);
+        float ly = oy + 56.f;
+        size_t pos2 = 0;
+        while (pos2 < s.size()) {
+            size_t nl = s.find('\n', pos2);
+            std::string line = (nl == std::string::npos) ? s.substr(pos2) : s.substr(pos2, nl - pos2);
+            m_ui.renderText(m_renderer, m_ui.getFont(), line.c_str(),
+                            m_screenW * 0.5f, ly, {200, 240, 210, 230}, true);
+            ly += 26.f;
+            if (nl == std::string::npos) break;
+            pos2 = nl + 1;
+        }
+        float blink = 0.55f + 0.45f * std::sin(m_titleTimer * 4.5f);
+        m_ui.renderText(m_renderer, m_ui.getFont(), "[ E: 닫기 ]",
+                        m_screenW * 0.5f, oy + 172.f, {180, 255, 200, (Uint8)(220 * blink)}, true);
+    }
 }
 
 int Game::tryGrabRock() {
@@ -1443,29 +1689,101 @@ void Game::renderBaseInterior() {
         }
     }
 
-    // Parts panel (right)
+    // Parts panel (right) — or planet-specific panel
     {
-        int partCount = LAYOUTS[m_currentPlanet].partCount;
         const float px = 960.f, py = 110.f, pw = 280.f, ph = 250.f;
-        SDL_SetRenderDrawColor(m_renderer, 18, 22, 32, 240);
-        SDL_FRect panel = {px, py, pw, ph};
-        SDL_RenderFillRectF(m_renderer, &panel);
-        SDL_SetRenderDrawColor(m_renderer, 60, 90, 140, 200);
-        SDL_RenderDrawRectF(m_renderer, &panel);
-        for (int i = 0; i < partCount; i++) {
-            float ix = px + 24.f + i * 56.f;
-            float iy = py + ph * 0.55f;
-            bool got = (i < m_planetPartsFound);
-            if (got) {
-                SDL_SetRenderDrawColor(m_renderer, 255, 210, 40, 255);
-                fillDiamond(m_renderer, ix, iy, 12.f);
-                SDL_SetRenderDrawColor(m_renderer, 255, 255, 160, 255);
-                fillDiamond(m_renderer, ix, iy, 5.f);
-            } else {
-                SDL_SetRenderDrawColor(m_renderer, 55, 60, 80, 200);
-                fillDiamond(m_renderer, ix, iy, 12.f);
-                SDL_SetRenderDrawColor(m_renderer, 40, 44, 60, 255);
-                fillDiamond(m_renderer, ix, iy, 5.f);
+
+        if (m_currentPlanet == 3) {
+            // Mars: archive panel showing collected log files
+            int collectedCount = 0;
+            for (int i = 0; i < 3; i++) if (m_marsLogsCollected[i]) collectedCount++;
+            SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
+            SDL_SetRenderDrawColor(m_renderer, 8, 20, 12, 245);
+            SDL_FRect panel = {px, py, pw, ph};
+            SDL_RenderFillRectF(m_renderer, &panel);
+            SDL_SetRenderDrawColor(m_renderer, 50, 180, 90, 200);
+            SDL_RenderDrawRectF(m_renderer, &panel);
+            // Log chip indicators
+            for (int i = 0; i < 3; i++) {
+                float cx2 = px + 36.f + i * 72.f;
+                float cy2 = py + ph * 0.55f;
+                if (m_marsLogsCollected[i]) {
+                    SDL_SetRenderDrawColor(m_renderer, 50, 220, 100, 255);
+                    SDL_FRect chip = {cx2 - 14.f, cy2 - 10.f, 28.f, 20.f};
+                    SDL_RenderFillRectF(m_renderer, &chip);
+                    SDL_SetRenderDrawColor(m_renderer, 150, 255, 180, 255);
+                    SDL_RenderDrawRectF(m_renderer, &chip);
+                } else {
+                    SDL_SetRenderDrawColor(m_renderer, 25, 50, 32, 200);
+                    SDL_FRect chip = {cx2 - 14.f, cy2 - 10.f, 28.f, 20.f};
+                    SDL_RenderFillRectF(m_renderer, &chip);
+                    SDL_SetRenderDrawColor(m_renderer, 40, 80, 50, 200);
+                    SDL_RenderDrawRectF(m_renderer, &chip);
+                }
+            }
+            // Base restoration lighting overlay based on parts found
+            if (m_planetPartsFound == 0) {
+                SDL_SetRenderDrawColor(m_renderer, 0, 0, 0, 80);
+                SDL_FRect darkOverlay = {42.f, 54.f, 1196.f, 566.f};
+                SDL_RenderFillRectF(m_renderer, &darkOverlay);
+            } else if (m_planetPartsFound == 1) {
+                SDL_SetRenderDrawColor(m_renderer, 0, 0, 0, 30);
+                SDL_FRect dimOverlay = {42.f, 54.f, 1196.f, 566.f};
+                SDL_RenderFillRectF(m_renderer, &dimOverlay);
+            }
+            SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
+        } else if (m_currentPlanet == 0) {
+            // Mercury: charging panel showing energy cells and warp range
+            SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
+            SDL_SetRenderDrawColor(m_renderer, 8, 16, 30, 245);
+            SDL_FRect panel = {px, py, pw, ph};
+            SDL_RenderFillRectF(m_renderer, &panel);
+            SDL_SetRenderDrawColor(m_renderer, 40, 120, 220, 200);
+            SDL_RenderDrawRectF(m_renderer, &panel);
+            // Energy cell indicators
+            for (int i = 0; i < 3; i++) {
+                float cx2 = px + 36.f + i * 72.f;
+                float cy2 = py + ph * 0.50f;
+                bool hasCell = (i < m_energyCellsFound);
+                float glow2 = hasCell ? (std::sin(m_baseTimer * 4.f + i) + 1.f) * 0.5f : 0.f;
+                if (hasCell) {
+                    SDL_SetRenderDrawColor(m_renderer, 30, 80, 200, (Uint8)(50 + 40 * glow2));
+                    SDL_FRect aura = {cx2 - 18.f, cy2 - 18.f, 36.f, 36.f};
+                    SDL_RenderFillRectF(m_renderer, &aura);
+                    SDL_SetRenderDrawColor(m_renderer, 60, 160, 255, 240);
+                    fillDiamond(m_renderer, cx2, cy2, 12.f);
+                    SDL_SetRenderDrawColor(m_renderer, 180, 230, 255, 255);
+                    fillDiamond(m_renderer, cx2, cy2, 5.f);
+                } else {
+                    SDL_SetRenderDrawColor(m_renderer, 22, 35, 60, 200);
+                    fillDiamond(m_renderer, cx2, cy2, 12.f);
+                    SDL_SetRenderDrawColor(m_renderer, 35, 55, 90, 200);
+                    fillDiamond(m_renderer, cx2, cy2, 5.f);
+                }
+            }
+            SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
+        } else {
+            int partCount = LAYOUTS[m_currentPlanet].partCount;
+            SDL_SetRenderDrawColor(m_renderer, 18, 22, 32, 240);
+            SDL_FRect panel = {px, py, pw, ph};
+            SDL_RenderFillRectF(m_renderer, &panel);
+            SDL_SetRenderDrawColor(m_renderer, 60, 90, 140, 200);
+            SDL_RenderDrawRectF(m_renderer, &panel);
+            for (int i = 0; i < partCount; i++) {
+                float ix = px + 24.f + i * 56.f;
+                float iy = py + ph * 0.55f;
+                bool got = (i < m_planetPartsFound);
+                if (got) {
+                    SDL_SetRenderDrawColor(m_renderer, 255, 210, 40, 255);
+                    fillDiamond(m_renderer, ix, iy, 12.f);
+                    SDL_SetRenderDrawColor(m_renderer, 255, 255, 160, 255);
+                    fillDiamond(m_renderer, ix, iy, 5.f);
+                } else {
+                    SDL_SetRenderDrawColor(m_renderer, 55, 60, 80, 200);
+                    fillDiamond(m_renderer, ix, iy, 12.f);
+                    SDL_SetRenderDrawColor(m_renderer, 40, 44, 60, 255);
+                    fillDiamond(m_renderer, ix, iy, 5.f);
+                }
             }
         }
     }
@@ -1533,9 +1851,37 @@ void Game::renderBaseInterior() {
             }
         }
 
-        // Parts panel title
-        m_ui.renderText(m_renderer, m_ui.getFont(), "수집 부품",
-                        960.f + 140.f, 110.f + 30.f, {160, 200, 255, 220}, true);
+        // Right panel title
+        if (m_currentPlanet == 3) {
+            m_ui.renderText(m_renderer, m_ui.getFont(), "데이터 아카이브",
+                            960.f + 140.f, 110.f + 30.f, {80, 220, 120, 220}, true);
+            int collectedCount = 0;
+            for (int i = 0; i < 3; i++) if (m_marsLogsCollected[i]) collectedCount++;
+            char logBuf[32];
+            std::snprintf(logBuf, sizeof(logBuf), "로그 %d/3", collectedCount);
+            m_ui.renderText(m_renderer, m_ui.getFont(), logBuf,
+                            960.f + 140.f, 110.f + 56.f, {150, 240, 170, 200}, true);
+            // E-hint if near archive and has logs
+            AABB archiveProbe = {960.f, 100.f, 280.f, 260.f};
+            if (m_player.getAABB().intersects(archiveProbe) && collectedCount > 0) {
+                float blink2 = 0.6f + 0.4f * std::sin(m_baseTimer * 4.f);
+                m_ui.renderText(m_renderer, m_ui.getFont(), "E: 열기",
+                                960.f + 140.f, 110.f + 250.f + 16.f,
+                                {100, 255, 150, (Uint8)(220 * blink2)}, true);
+            }
+        } else if (m_currentPlanet == 0) {
+            m_ui.renderText(m_renderer, m_ui.getFont(), "충전 패널",
+                            960.f + 140.f, 110.f + 30.f, {80, 160, 255, 220}, true);
+            char cellBuf2[48];
+            int cells = m_energyCellsFound;
+            const char* range = cells >= 3 ? "자유 선택" : cells == 2 ? "2행성 범위" : "인접 행성만";
+            std::snprintf(cellBuf2, sizeof(cellBuf2), "셀 %d/3  범위: %s", cells, range);
+            m_ui.renderText(m_renderer, m_ui.getFont(), cellBuf2,
+                            960.f + 140.f, 110.f + 56.f, {140, 200, 255, 200}, true);
+        } else {
+            m_ui.renderText(m_renderer, m_ui.getFont(), "수집 부품",
+                            960.f + 140.f, 110.f + 30.f, {160, 200, 255, 220}, true);
+        }
 
         // Exit label
         m_ui.renderText(m_renderer, m_ui.getFont(), "[ 외부로 나가기 ]",
@@ -1544,6 +1890,63 @@ void Game::renderBaseInterior() {
 
     // Player
     m_player.render(m_renderer, 0.f, 0.f);
+
+    // Mars archive overlay
+    if (m_marsArchiveOpen && m_ui.getFont()) {
+        static const char* LOG_TITLES[3] = {
+            "탐사대 기록 #001",
+            "탐사대 기록 #002",
+            "탐사대 기록 #003"
+        };
+        static const char* LOG_BODIES[3] = {
+            "우리는 이 게이트를 발견했다.\n고대 문명의 것이 분명하다.",
+            "게이트 작동 원리를 파악했다.\n부품만 있으면 어디든 갈 수 있어.",
+            "우리 중 한 명이 사라졌다.\n게이트가... 뭔가 이상해."
+        };
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(m_renderer, 0, 0, 0, 185);
+        SDL_FRect dim = {0.f, 0.f, (float)m_screenW, (float)m_screenH};
+        SDL_RenderFillRectF(m_renderer, &dim);
+        float aox = m_screenW * 0.5f - 280.f, aoy = m_screenH * 0.5f - 140.f;
+        SDL_SetRenderDrawColor(m_renderer, 8, 20, 12, 250);
+        SDL_FRect apop = {aox, aoy, 560.f, 280.f};
+        SDL_RenderFillRectF(m_renderer, &apop);
+        SDL_SetRenderDrawColor(m_renderer, 50, 190, 90, 230);
+        SDL_RenderDrawRectF(m_renderer, &apop);
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
+        m_ui.renderText(m_renderer, m_ui.getFont(), "데이터 아카이브",
+                        m_screenW * 0.5f, aoy + 22.f, {80, 240, 130, 240}, true);
+        // Tab selectors
+        int tabIdx = 0;
+        for (int i = 0; i < 3; i++) {
+            if (!m_marsLogsCollected[i]) continue;
+            float tx = aox + 40.f + tabIdx * 130.f;
+            bool sel = (m_marsArchiveSel == i);
+            SDL_Color tc2 = sel ? SDL_Color{80, 255, 140, 255} : SDL_Color{80, 150, 100, 180};
+            m_ui.renderText(m_renderer, m_ui.getFont(), LOG_TITLES[i], tx + 50.f, aoy + 58.f, tc2, true);
+            tabIdx++;
+        }
+        // Display selected log
+        if (m_marsLogsCollected[m_marsArchiveSel]) {
+            m_ui.renderText(m_renderer, m_ui.getFont(), LOG_TITLES[m_marsArchiveSel],
+                            m_screenW * 0.5f, aoy + 100.f, {130, 255, 170, 230}, true);
+            std::string body(LOG_BODIES[m_marsArchiveSel]);
+            float ly2 = aoy + 132.f;
+            size_t pos3 = 0;
+            while (pos3 < body.size()) {
+                size_t nl = body.find('\n', pos3);
+                std::string line = (nl == std::string::npos) ? body.substr(pos3) : body.substr(pos3, nl - pos3);
+                m_ui.renderText(m_renderer, m_ui.getFont(), line.c_str(),
+                                m_screenW * 0.5f, ly2, {200, 240, 210, 230}, true);
+                ly2 += 26.f;
+                if (nl == std::string::npos) break;
+                pos3 = nl + 1;
+            }
+        }
+        float blink2 = 0.55f + 0.45f * std::sin(m_baseTimer * 4.5f);
+        m_ui.renderText(m_renderer, m_ui.getFont(), "[ E: 닫기 ]",
+                        m_screenW * 0.5f, aoy + 252.f, {180, 255, 200, (Uint8)(220 * blink2)}, true);
+    }
 
     // Board reading overlay
     if (m_baseReadingBoard && m_ui.getFont()) {

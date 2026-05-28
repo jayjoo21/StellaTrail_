@@ -74,6 +74,20 @@ private:
     Vec2 m_basePlayerPos = {640.f, 480.f};
     bool m_baseReadingBoard = false;
 
+    // Mercury reset system
+    std::vector<Vec2> m_initialRockPos;
+    float m_resetFade  = 0.f;
+    int   m_resetState = 0;   // 0=idle, 1=fading out, 2=restoring+fading in
+
+    // Mercury energy cells
+    int m_energyCellsFound = 0;
+
+    // Mars log files
+    bool m_marsLogsCollected[3] = {};
+    int  m_marsLogReading       = -1;
+    bool m_marsArchiveOpen      = false;
+    int  m_marsArchiveSel       = 0;
+
     void handleEvents();
     void update(float dt);
     void render();

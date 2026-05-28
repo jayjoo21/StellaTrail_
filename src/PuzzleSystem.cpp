@@ -28,6 +28,12 @@ void PuzzleSystem::update(float dt) {
     for (auto& p : parts) {
         if (!p.collected) p.bobTimer += dt;
     }
+    for (auto& lf : logFiles) {
+        if (!lf.collected) lf.bobTimer += dt;
+    }
+    for (auto& ec : energyCells) {
+        if (!ec.collected) ec.bobTimer += dt;
+    }
 
     // Warp gate glow pulse
     if (warpGate.active) {
@@ -42,25 +48,28 @@ void PuzzleSystem::update(float dt) {
 }
 
 void PuzzleSystem::tickMercuryGimmick(float dt) {
-    m_mercuryTimer += dt;
-    if (m_mercuryTimer < 2.f) return;
-    m_mercuryTimer = 0.f;
-    if (rocks.empty()) return;
-    int idx = rand() % (int)rocks.size();
-    if (!rocks[idx].active) return;
-    // Try up to 8 angles; skip directions that push rock into player
-    for (int attempt = 0; attempt < 8; attempt++) {
-        float angle = (float)(rand() % 628) / 100.f;
-        Vec2 dir = {std::cos(angle), std::sin(angle)};
-        Vec2 toPlayer = playerPos - rocks[idx].pos;
-        float dist = toPlayer.length();
-        if (dist < 96.f && dist > 0.f) {
-            Vec2 norm = toPlayer * (1.f / dist);
-            float dot = dir.x * norm.x + dir.y * norm.y;
-            if (dot > 0.5f) continue;  // would push rock toward nearby player
+    // 6s cycle: 0-3s move left, 3-6s move right
+    // 1s warning before each switch (at t=2s warning→left stops, t=5s warning→right stops)
+    float prev = m_mercuryDirTimer;
+    m_mercuryDirTimer += dt;
+    if (m_mercuryDirTimer >= 6.f) m_mercuryDirTimer -= 6.f;
+
+    float t = m_mercuryDirTimer;
+    bool wasLeft  = (prev < 3.f);
+    bool nowLeft  = (t    < 3.f);
+    mercuryGoingLeft = nowLeft;
+
+    // Warning: 1s before phase switch
+    mercuryWarning = (t > 2.f && t < 3.f) || (t > 5.f);
+
+    // Apply impulse at phase transition
+    bool switched = (wasLeft != nowLeft) || (prev > t); // prev > t means wrapped
+    if (switched) {
+        Vec2 dir = nowLeft ? Vec2{-1.f, 0.f} : Vec2{1.f, 0.f};
+        for (auto& rock : rocks) {
+            if (!rock.active) continue;
+            Physics::applyImpulse(rock, dir, 140.f, m_physics);
         }
-        Physics::applyImpulse(rocks[idx], dir, 120.f, m_physics);
-        break;
     }
 }
 
@@ -136,6 +145,28 @@ int PuzzleSystem::tryCollect(const AABB& player) {
     return -1;
 }
 
+int PuzzleSystem::tryCollectLog(const AABB& player) {
+    for (int i = 0; i < (int)logFiles.size(); i++) {
+        auto& lf = logFiles[i];
+        if (!lf.collected && lf.getAABB().intersects(player)) {
+            lf.collected = true;
+            return lf.logId;
+        }
+    }
+    return -1;
+}
+
+int PuzzleSystem::tryCollectCell(const AABB& player) {
+    for (int i = 0; i < (int)energyCells.size(); i++) {
+        auto& ec = energyCells[i];
+        if (!ec.collected && ec.getAABB().intersects(player)) {
+            ec.collected = true;
+            return i;
+        }
+    }
+    return -1;
+}
+
 void PuzzleSystem::addPressurePlate(float x, float y, float w, float h, int doorId) {
     plates.push_back({{x,y,w,h}, doorId, false});
 }
@@ -148,6 +179,12 @@ void PuzzleSystem::addRock(float x, float y, float mass) {
 }
 void PuzzleSystem::addPart(float x, float y) {
     parts.push_back({{x,y}, false, 0.f});
+}
+void PuzzleSystem::addLogFile(float x, float y, int logId) {
+    logFiles.push_back({{x,y}, logId, false, 0.f});
+}
+void PuzzleSystem::addEnergyCell(float x, float y) {
+    energyCells.push_back({{x,y}, false, 0.f});
 }
 void PuzzleSystem::setWarpGate(float x, float y) {
     warpGate = WarpGate{};

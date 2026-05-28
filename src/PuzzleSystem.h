@@ -21,6 +21,21 @@ struct Part {
     AABB getAABB() const { return {pos.x-8.f, pos.y-8.f, 16.f, 16.f}; }
 };
 
+struct LogFile {
+    Vec2  pos;
+    int   logId    = 0;
+    bool  collected = false;
+    float bobTimer  = 0.f;
+    AABB getAABB() const { return {pos.x-10.f, pos.y-10.f, 20.f, 20.f}; }
+};
+
+struct EnergyCell {
+    Vec2  pos;
+    bool  collected = false;
+    float bobTimer  = 0.f;
+    AABB getAABB() const { return {pos.x-10.f, pos.y-10.f, 20.f, 20.f}; }
+};
+
 struct WarpGate {
     Vec2  pos;
     bool  active    = false;
@@ -50,14 +65,21 @@ public:
     std::vector<Door>          doors;
     std::vector<RigidBody>     rocks;
     std::vector<Part>          parts;
+    std::vector<LogFile>       logFiles;
+    std::vector<EnergyCell>    energyCells;
     WarpGate                   warpGate;
     BaseEntrance               baseEntrance;
+
+    bool mercuryGoingLeft = true;
+    bool mercuryWarning   = false;
 
     void update(float dt);
     bool isBlocked(const AABB& mover) const;
     void resolveRockVsWalls(const std::vector<AABB>& walls);
     void resolveRockVsRock();
     int  tryCollect(const AABB& player);
+    int  tryCollectLog(const AABB& player);
+    int  tryCollectCell(const AABB& player);
 
     Vec2 rockExternalForce = {};
     Vec2 playerPos         = {};
@@ -66,6 +88,8 @@ public:
     void addDoor(float x, float y, float w, float h);
     void addRock(float x, float y, float mass = 5.f);
     void addPart(float x, float y);
+    void addLogFile(float x, float y, int logId);
+    void addEnergyCell(float x, float y);
     void setWarpGate(float x, float y);
     void setBaseEntrance(float x, float y);
     void activateWarpGate() { warpGate.active = true; }
@@ -75,7 +99,7 @@ public:
 
 private:
     PlanetPhysics m_physics;
-    float m_mercuryTimer = 0.f;
+    float m_mercuryDirTimer = 0.f;
 
     void checkPlates();
     void tickMercuryGimmick(float dt);
