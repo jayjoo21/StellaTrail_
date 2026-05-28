@@ -34,6 +34,9 @@ void PuzzleSystem::update(float dt) {
     for (auto& ec : energyCells) {
         if (!ec.collected) ec.bobTimer += dt;
     }
+    for (auto& ed : energyDrinks) {
+        if (!ed.collected) ed.bobTimer += dt;
+    }
 
     // Warp gate glow pulse
     if (warpGate.active) {
@@ -167,6 +170,38 @@ int PuzzleSystem::tryCollectCell(const AABB& player) {
     return -1;
 }
 
+int PuzzleSystem::tryCollectDrink(const AABB& player) {
+    for (int i = 0; i < (int)energyDrinks.size(); i++) {
+        auto& ed = energyDrinks[i];
+        if (!ed.collected && ed.getAABB().intersects(player)) {
+            ed.collected = true;
+            return i;
+        }
+    }
+    return -1;
+}
+
+bool PuzzleSystem::updateUnstablePlatforms(float dt, const AABB& playerAABB) {
+    bool death = false;
+    for (auto& up : unstablePlatforms) {
+        if (up.state == 0) {
+            if (playerAABB.intersects(up.getAABB()))
+                up.state = 1, up.timer = 3.f;
+        } else if (up.state == 1) {
+            up.timer -= dt;
+            up.shakeAmt = 4.f * std::sin(up.timer * 22.f) * (up.timer / 3.f);
+            if (up.timer <= 0.f) {
+                if (playerAABB.intersects(up.getAABB())) death = true;
+                up.state = 2; up.timer = 10.f; up.shakeAmt = 0.f;
+            }
+        } else if (up.state == 2) {
+            up.timer -= dt;
+            if (up.timer <= 0.f) { up.state = 0; up.timer = 0.f; }
+        }
+    }
+    return death;
+}
+
 void PuzzleSystem::addPressurePlate(float x, float y, float w, float h, int doorId) {
     plates.push_back({{x,y,w,h}, doorId, false});
 }
@@ -185,6 +220,14 @@ void PuzzleSystem::addLogFile(float x, float y, int logId) {
 }
 void PuzzleSystem::addEnergyCell(float x, float y) {
     energyCells.push_back({{x,y}, false, 0.f});
+}
+void PuzzleSystem::addEnergyDrink(float x, float y) {
+    energyDrinks.push_back({{x,y}, false, 0.f});
+}
+void PuzzleSystem::addUnstablePlatform(float x, float y, float w, float h) {
+    UnstablePlatform up;
+    up.pos = {x, y}; up.w = w; up.h = h;
+    unstablePlatforms.push_back(up);
 }
 void PuzzleSystem::setWarpGate(float x, float y) {
     warpGate = WarpGate{};

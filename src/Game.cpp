@@ -211,6 +211,8 @@ void Game::loadPlanet(int idx) {
         m_puzzle.addLogFile(160.f, 350.f, 0);
         m_puzzle.addLogFile(490.f, 300.f, 1);
         m_puzzle.addLogFile(780.f, 250.f, 2);
+        // Energy drink
+        m_puzzle.addEnergyDrink(500.f, 180.f);
         // Reset Mars log state
         for (int i = 0; i < 3; i++) m_marsLogsCollected[i] = false;
         m_marsLogReading   = -1;
@@ -256,6 +258,38 @@ void Game::loadPlanet(int idx) {
         m_energyCellsFound = 0;
         m_resetFade  = 0.f;
         m_resetState = 0;
+        m_mercuryDayCycle = 0.f;
+        // Energy drinks
+        m_puzzle.addEnergyDrink(288.f, 430.f);
+        m_puzzle.addEnergyDrink(832.f, 400.f);
+        // Heat cracks (death zones)
+        m_heatCracks.clear();
+        m_heatCracks.push_back({450.f, 455.f, 22.f, 14.f});  // rock0 can bridge this
+        m_heatCracks.push_back({700.f, 460.f, 60.f, 14.f});  // platform 1 spans this
+        m_heatCracks.push_back({880.f, 510.f, 26.f, 14.f});  // platform 2 spans this
+        // Unstable platforms
+        m_puzzle.addUnstablePlatform(461.f, 448.f, 64.f, 14.f);  // spans crack 1 before rock bridge
+        m_puzzle.addUnstablePlatform(730.f, 453.f, 64.f, 14.f);  // spans crack 2
+        m_puzzle.addUnstablePlatform(893.f, 503.f, 64.f, 14.f);  // spans crack 3
+    } else {
+        m_heatCracks.clear();
+    }
+
+    // Energy drinks per planet (not Mars/Mercury, handled above)
+    // Venus=1, Earth=2, Jupiter=4, Saturn=5, Uranus=6, Neptune=7
+    static const struct { int cnt; float xs[5]; float ys[5]; } DRINK_LAYOUT[8] = {
+        {0,{},{} },  // 0 Mercury (handled above)
+        {2,{224,864},{192,192}},  // 1 Venus
+        {3,{160,576,960},{160,160,160}},  // 2 Earth
+        {0,{},{} },  // 3 Mars (handled above)
+        {3,{224,640,960},{160,160,160}},  // 4 Jupiter
+        {4,{160,448,832,1056},{192,192,192,192}},  // 5 Saturn
+        {4,{192,480,768,1024},{160,192,160,192}},  // 6 Uranus
+        {5,{128,320,640,896,1024},{160,192,160,192,160}},  // 7 Neptune
+    };
+    if (idx < 8) {
+        for (int di = 0; di < DRINK_LAYOUT[idx].cnt; di++)
+            m_puzzle.addEnergyDrink(DRINK_LAYOUT[idx].xs[di], DRINK_LAYOUT[idx].ys[di]);
     }
 
     m_player.pos = {L.startX, L.startY};
@@ -447,6 +481,14 @@ void Game::handleEvents() {
             if (m_scene == Scene::Ending &&
                (sym == SDLK_RETURN || sym == SDLK_SPACE))
                 m_running = false;
+            if (m_scene == Scene::GameOver &&
+               (sym == SDLK_RETURN || sym == SDLK_SPACE || sym == SDLK_ESCAPE)) {
+                m_lives = 3;
+                m_deathFade = 0.f;
+                m_deathState = 0;
+                m_titleTimer = 0.f;
+                m_scene = Scene::Title;
+            }
         }
         if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
             if (m_scene == Scene::Prologue) {
@@ -469,6 +511,7 @@ void Game::update(float dt) {
         case Scene::Playing:        updatePlaying(dt);        break;
         case Scene::BaseInterior:   updateBaseInterior(dt);   break;
         case Scene::WarpActivation: updateWarpActivation(dt); break;
+        case Scene::GameOver:       updateGameOver(dt);       break;
         case Scene::Ending:         updateEnding(dt);         break;
     }
 }
@@ -493,6 +536,29 @@ void Game::updateIntro(float dt) {
 }
 
 void Game::updatePlaying(float dt) {
+    // Death state machine
+    if (m_deathState == 1) {
+        m_deathFade += dt * 2.5f;
+        if (m_deathFade >= 1.f) {
+            m_deathFade = 1.f;
+            if (m_lives <= 0) {
+                m_scene = Scene::GameOver;
+                m_gameOverTimer = 0.f;
+                m_deathState = 0;
+                return;
+            }
+            m_player.pos = m_respawnPos;
+            m_player.vel = {};
+            m_deathState = 2;
+        }
+        m_ui.update(dt);
+        return;
+    }
+    if (m_deathState == 2) {
+        m_deathFade -= dt * 2.f;
+        if (m_deathFade <= 0.f) { m_deathFade = 0.f; m_deathState = 0; }
+    }
+
     updateGimmicks(dt);
 
     auto walls = collectWalls();
@@ -615,6 +681,43 @@ void Game::updatePlaying(float dt) {
         m_scene = Scene::BaseInterior;
     }
 
+    // Energy drink collection (all planets)
+    {
+        int drinkIdx = m_puzzle.tryCollectDrink(m_player.getAABB());
+        if (drinkIdx >= 0) {
+            if (m_lives < 3) m_lives++;
+            m_ui.showPopup("에너지 드링크! 목숨 +1", (float)(m_screenW/2), (float)(m_screenH - 120));
+        }
+    }
+
+    // Mercury: day cycle + unstable platform death + heat crack death
+    if (m_currentPlanet == 0) {
+        m_mercuryDayCycle += dt;
+
+        if (m_puzzle.updateUnstablePlatforms(dt, m_player.getAABB())) {
+            loseLife();
+        } else {
+            AABB pa = m_player.getAABB();
+            for (const auto& crack : m_heatCracks) {
+                if (pa.intersects(crack)) { loseLife(); break; }
+            }
+        }
+    }
+
+    // Mars: canyon death (only in open gap, outside bridge safe zone)
+    if (m_currentPlanet == 3 && m_deathState == 0) {
+        static const float CANYON_X[] = {320.f, 672.f, 960.f};
+        static const float CANYON_W   = 32.f;
+        float pcx = m_player.pos.x;
+        float pcy = m_player.pos.y;
+        for (int i = 0; i < 3 && i < (int)m_puzzle.doors.size(); i++) {
+            if (!m_puzzle.doors[i].open) continue;
+            if (pcx >= CANYON_X[i] && pcx <= CANYON_X[i] + CANYON_W) {
+                if (pcy < 520.f || pcy > 580.f) { loseLife(); break; }
+            }
+        }
+    }
+
     m_ui.update(dt);
 }
 
@@ -717,6 +820,8 @@ std::vector<AABB> Game::collectWalls() const {
     auto walls = m_map.getSolidAABBs();
     for (const auto& door : m_puzzle.doors)
         if (!door.open) walls.push_back(door.area);
+    for (const auto& up : m_puzzle.unstablePlatforms)
+        if (up.state != 2) walls.push_back(up.getAABB());
     return walls;
 }
 
@@ -912,6 +1017,16 @@ void Game::drawStar(SDL_Renderer* r, float x, float y, float sz, Uint8 a) {
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
 }
 
+static void drawHeart(SDL_Renderer* r, float cx, float cy, float s) {
+    float r1 = s * 0.4f;
+    fillCircle(r, cx - r1*0.72f, cy - r1*0.35f, r1);
+    fillCircle(r, cx + r1*0.72f, cy - r1*0.35f, r1);
+    for (float dy = -r1*0.1f; dy <= s*0.72f; dy += 1.f) {
+        float hw = (s*0.72f - dy) * 0.88f;
+        if (hw > 0.f) SDL_RenderDrawLineF(r, cx - hw, cy + dy, cx + hw, cy + dy);
+    }
+}
+
 void Game::drawStarfield(SDL_Renderer* r, int w, int h, float timer) {
     srand(42);
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
@@ -942,6 +1057,7 @@ void Game::render() {
         case Scene::Playing:        renderPlaying();        break;
         case Scene::BaseInterior:   renderBaseInterior();   break;
         case Scene::WarpActivation: renderWarpActivation(); break;
+        case Scene::GameOver:       renderGameOver();       break;
         case Scene::Ending:         renderEnding();         break;
     }
     SDL_RenderPresent(m_renderer);
@@ -1065,6 +1181,35 @@ void Game::renderIntro() {
 void Game::renderPlaying() {
     m_map.render(m_renderer, m_camX, m_camY);
 
+    // Mercury: day/night cycle overlay
+    if (m_currentPlanet == 0) {
+        float phase = std::fmod(m_mercuryDayCycle, 30.f) / 30.f;
+        float night = 0.5f * (1.f - std::cos(phase * 6.28318f));
+        Uint8 dimA = (Uint8)(150 * night);
+        if (dimA > 0) {
+            SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
+            SDL_SetRenderDrawColor(m_renderer, 0, 0, 25, dimA);
+            SDL_FRect full = {0.f, 0.f, (float)m_screenW, (float)m_screenH};
+            SDL_RenderFillRectF(m_renderer, &full);
+            SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
+        }
+        // Heat cracks (dark fissures with red glow)
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
+        for (const auto& crack : m_heatCracks) {
+            float cx2 = crack.x - m_camX, cy2 = crack.y - m_camY;
+            float glow = (std::sin(m_titleTimer * 4.f) + 1.f) * 0.5f;
+            SDL_SetRenderDrawColor(m_renderer, (Uint8)(180 + 50*glow), 30, 5, (Uint8)(60 + 40*glow));
+            SDL_FRect grf = {cx2 - 3.f, cy2 - 3.f, crack.w + 6.f, crack.h + 6.f};
+            SDL_RenderFillRectF(m_renderer, &grf);
+            SDL_SetRenderDrawColor(m_renderer, 0, 0, 0, 240);
+            SDL_FRect rf = {cx2, cy2, crack.w, crack.h};
+            SDL_RenderFillRectF(m_renderer, &rf);
+            SDL_SetRenderDrawColor(m_renderer, (Uint8)(220 * glow), (Uint8)(40 * glow), 0, (Uint8)(100 + 80*glow));
+            SDL_RenderDrawRectF(m_renderer, &rf);
+        }
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
+    }
+
     SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
 
     // Mercury heat particles around rocks
@@ -1148,6 +1293,25 @@ void Game::renderPlaying() {
                 SDL_FRect edR = {ex, py2, 2.f, 2.f};
                 SDL_RenderFillRectF(m_renderer, &edR);
             }
+        }
+
+        // 협곡 돌다리 (항상 존재, 문 열림 시 통과 가능)
+        for (int ci = 0; ci < 3; ci++) {
+            bool passable = (ci < (int)m_puzzle.doors.size()) &&
+                            (m_puzzle.doors[ci].open || m_puzzle.doors[ci].openAnim > 0.02f);
+            if (!passable) continue;
+            float bwx = CANYON_WORLD_X[ci] - m_camX;
+            float bwy = 532.f - m_camY;
+            SDL_SetRenderDrawColor(m_renderer, 90, 78, 65, 245);
+            SDL_FRect bridge = {bwx, bwy, 32.f, 28.f};
+            SDL_RenderFillRectF(m_renderer, &bridge);
+            SDL_SetRenderDrawColor(m_renderer, 68, 57, 46, 200);
+            for (float ly = bwy + 8.f; ly < bwy + 28.f; ly += 9.f)
+                SDL_RenderDrawLineF(m_renderer, bwx + 2.f, ly, bwx + 30.f, ly);
+            SDL_SetRenderDrawColor(m_renderer, 120, 108, 92, 230);
+            SDL_RenderDrawLineF(m_renderer, bwx, bwy, bwx + 32.f, bwy);
+            SDL_SetRenderDrawColor(m_renderer, 50, 42, 34, 210);
+            SDL_RenderDrawRectF(m_renderer, &bridge);
         }
 
         // 협곡 근처 화면 가장자리 붉은 열기 효과
@@ -1271,6 +1435,34 @@ void Game::renderPlaying() {
         SDL_RenderFillRectF(m_renderer, &top);
     }
 
+    // Mercury: unstable platforms
+    if (m_currentPlanet == 0 && !m_puzzle.unstablePlatforms.empty()) {
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
+        for (const auto& up : m_puzzle.unstablePlatforms) {
+            if (up.state == 2) continue;
+            float upx = up.pos.x - m_camX;
+            float upy = up.pos.y + up.shakeAmt - m_camY;
+            float upw = up.w, uph = up.h;
+            Uint8 baseGray = (up.state == 1) ? 100 : 145;
+            float crack = (up.state == 1) ? (1.f - up.timer / 3.f) : 0.f;
+            SDL_SetRenderDrawColor(m_renderer, baseGray, (Uint8)(baseGray-12), (Uint8)(baseGray-22), 230);
+            SDL_FRect rf = {upx - upw*0.5f, upy - uph*0.5f, upw, uph};
+            SDL_RenderFillRectF(m_renderer, &rf);
+            SDL_SetRenderDrawColor(m_renderer, (Uint8)(baseGray+40), (Uint8)(baseGray+28), (Uint8)(baseGray+16), 255);
+            SDL_RenderDrawRectF(m_renderer, &rf);
+            // Crack lines when shaking
+            if (up.state == 1 && crack > 0.3f) {
+                Uint8 ca = (Uint8)(200 * crack);
+                SDL_SetRenderDrawColor(m_renderer, 200, 60, 10, ca);
+                SDL_RenderDrawLineF(m_renderer, upx - upw*0.3f, upy - uph*0.5f,
+                                    upx - upw*0.1f, upy + uph*0.5f);
+                SDL_RenderDrawLineF(m_renderer, upx + upw*0.2f, upy - uph*0.5f,
+                                    upx + upw*0.4f, upy + uph*0.5f);
+            }
+        }
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
+    }
+
     SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
 
     // "E키로 입장" label above base entrance
@@ -1318,6 +1510,9 @@ void Game::renderPlaying() {
     for (int i = 0; i < (int)m_puzzle.energyCells.size(); i++)
         if (!m_puzzle.energyCells[i].collected)
             dlist.push_back({m_puzzle.energyCells[i].pos.y, 4, i});
+    for (int i = 0; i < (int)m_puzzle.energyDrinks.size(); i++)
+        if (!m_puzzle.energyDrinks[i].collected)
+            dlist.push_back({m_puzzle.energyDrinks[i].pos.y, 5, i});
     std::sort(dlist.begin(), dlist.end(),
               [](const Drawable& a, const Drawable& b){ return a.y < b.y; });
 
@@ -1455,6 +1650,31 @@ void Game::renderPlaying() {
             SDL_SetRenderDrawColor(m_renderer, 200, 235, 255, 255);
             fillDiamond(m_renderer, ecx, ecy, 2.f);
             SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
+        } else if (d.type == 5) {
+            // Energy drink: blue potion bottle + glow
+            const auto& ed = m_puzzle.energyDrinks[d.idx];
+            float bob = std::sin(ed.bobTimer * 2.6f) * 3.5f;
+            float edx = ed.pos.x - m_camX, edy = ed.pos.y - m_camY + bob;
+            float glw = (std::sin(ed.bobTimer * 3.5f) + 1.f) * 0.5f;
+            SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
+            SDL_SetRenderDrawColor(m_renderer, 40, 100, 255, (Uint8)(25 + 35*glw));
+            SDL_FRect aura = {edx-16.f, edy-22.f, 32.f, 44.f};
+            SDL_RenderFillRectF(m_renderer, &aura);
+            SDL_SetRenderDrawColor(m_renderer, 30, 80, 200, 230);
+            SDL_FRect body = {edx-6.f, edy-8.f, 12.f, 18.f};
+            SDL_RenderFillRectF(m_renderer, &body);
+            SDL_SetRenderDrawColor(m_renderer, 40, 100, 220, 230);
+            SDL_FRect neck = {edx-3.f, edy-16.f, 6.f, 10.f};
+            SDL_RenderFillRectF(m_renderer, &neck);
+            SDL_SetRenderDrawColor(m_renderer, 180, 210, 255, 255);
+            SDL_FRect cap = {edx-4.f, edy-18.f, 8.f, 4.f};
+            SDL_RenderFillRectF(m_renderer, &cap);
+            SDL_SetRenderDrawColor(m_renderer, 80, 160, 255, (Uint8)(140 + 80*glw));
+            SDL_FRect liq = {edx-3.f, edy-6.f, 6.f, 12.f};
+            SDL_RenderFillRectF(m_renderer, &liq);
+            SDL_SetRenderDrawColor(m_renderer, 100, 180, 255, 200);
+            SDL_RenderDrawRectF(m_renderer, &body);
+            SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
         }
     }
 
@@ -1554,6 +1774,29 @@ void Game::renderPlaying() {
                 gimmickActive,
                 m_windWarning,
                 m_stellaText, stellaAlpha);
+
+    // Lives HUD (hearts, top-left)
+    {
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
+        float hx0 = 24.f, hy0 = 28.f, hs = 11.f, gap = 28.f;
+        for (int i = 0; i < 3; i++) {
+            bool filled = (i < m_lives);
+            float pulse = (m_lives == 1 && filled)
+                ? (0.5f + 0.5f * std::sin(m_titleTimer * 6.f)) : 1.f;
+            Uint8 alpha = filled ? (Uint8)(230 * pulse) : 70;
+            if (filled) SDL_SetRenderDrawColor(m_renderer, 220, 50, 50, alpha);
+            else        SDL_SetRenderDrawColor(m_renderer, 80, 80, 80, alpha);
+            drawHeart(m_renderer, hx0 + i * gap, hy0, hs);
+        }
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
+        // 1-life warning text
+        if (m_lives == 1 && m_ui.getFont()) {
+            float blink = 0.5f + 0.5f * std::sin(m_titleTimer * 5.f);
+            SDL_Color wc = {255, 80, 80, (Uint8)(220 * blink)};
+            m_ui.renderText(m_renderer, m_ui.getFont(), "위험! 목숨 1개 남았어!",
+                            (float)m_screenW * 0.5f, 14.f, wc, true);
+        }
+    }
 
     // Mercury-specific UI
     if (m_currentPlanet == 0) {
@@ -1659,6 +1902,15 @@ void Game::renderPlaying() {
         m_ui.renderText(m_renderer, m_ui.getFontBig(),
                         ZONE_NAMES[m_marsZoneTextIdx],
                         m_screenW * 0.5f, 68.f, {255, 160, 80, a}, true);
+    }
+
+    // Death fade overlay
+    if (m_deathFade > 0.f) {
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(m_renderer, 0, 0, 0, (Uint8)(255 * m_deathFade));
+        SDL_FRect full = {0.f, 0.f, (float)m_screenW, (float)m_screenH};
+        SDL_RenderFillRectF(m_renderer, &full);
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
     }
 }
 
@@ -2220,4 +2472,52 @@ void Game::renderEnding() {
     }
 
     m_ui.renderEnding(m_renderer, m_screenW, m_screenH, m_endingTimer);
+}
+
+void Game::loseLife() {
+    if (m_deathState != 0) return;
+    m_lives--;
+    m_deathFade = 0.f;
+    m_deathState = 1;
+    const PlanetLayout& L = LAYOUTS[m_currentPlanet];
+    m_respawnPos = {L.startX, L.startY};
+}
+
+void Game::updateGameOver(float dt) {
+    m_gameOverTimer += dt;
+}
+
+void Game::renderGameOver() {
+    SDL_SetRenderDrawColor(m_renderer, 0, 0, 0, 255);
+    SDL_RenderClear(m_renderer);
+    drawStarfield(m_renderer, m_screenW, m_screenH, m_gameOverTimer * 0.3f);
+
+    float fade = std::min(m_gameOverTimer / 0.8f, 1.f);
+    SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
+
+    // Dim overlay
+    SDL_SetRenderDrawColor(m_renderer, 0, 0, 0, (Uint8)(180 * fade));
+    SDL_FRect full = {0.f, 0.f, (float)m_screenW, (float)m_screenH};
+    SDL_RenderFillRectF(m_renderer, &full);
+
+    // Red pulse ring
+    float ring = std::fmod(m_gameOverTimer * 0.8f, 1.f);
+    SDL_SetRenderDrawColor(m_renderer, 180, 30, 30, (Uint8)(90 * (1.f - ring) * fade));
+    float rr = ring * 400.f;
+    SDL_FRect rrf = {m_screenW*0.5f - rr, m_screenH*0.5f - rr, rr*2.f, rr*2.f};
+    SDL_RenderFillRectF(m_renderer, &rrf);
+    SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
+
+    if (m_ui.getFontBig()) {
+        float pulse = 0.85f + 0.15f * std::sin(m_gameOverTimer * 2.5f);
+        Uint8 a = (Uint8)(255 * fade * pulse);
+        m_ui.renderText(m_renderer, m_ui.getFontBig(), "GAME OVER",
+                        m_screenW * 0.5f, m_screenH * 0.42f, {220, 50, 50, a}, true);
+    }
+    if (m_ui.getFont()) {
+        float blink = 0.55f + 0.45f * std::sin(m_gameOverTimer * 3.f);
+        Uint8 ba = (Uint8)(220 * fade * blink);
+        m_ui.renderText(m_renderer, m_ui.getFont(), "[ ENTER / SPACE: 처음으로 ]",
+                        m_screenW * 0.5f, m_screenH * 0.58f, {200, 180, 180, ba}, true);
+    }
 }

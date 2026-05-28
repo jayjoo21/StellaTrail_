@@ -36,6 +36,24 @@ struct EnergyCell {
     AABB getAABB() const { return {pos.x-10.f, pos.y-10.f, 20.f, 20.f}; }
 };
 
+struct EnergyDrink {
+    Vec2  pos;
+    bool  collected = false;
+    float bobTimer  = 0.f;
+    AABB getAABB() const { return {pos.x-8.f, pos.y-14.f, 16.f, 28.f}; }
+};
+
+struct UnstablePlatform {
+    Vec2  pos;
+    float w = 64.f, h = 14.f;
+    int   state    = 0;   // 0=solid, 1=shaking, 2=collapsed
+    float timer    = 0.f;
+    float shakeAmt = 0.f;
+    AABB getAABB() const {
+        return {pos.x - w*0.5f, pos.y - h*0.5f + shakeAmt, w, h};
+    }
+};
+
 struct WarpGate {
     Vec2  pos;
     bool  active    = false;
@@ -65,10 +83,12 @@ public:
     std::vector<Door>          doors;
     std::vector<RigidBody>     rocks;
     std::vector<Part>          parts;
-    std::vector<LogFile>       logFiles;
-    std::vector<EnergyCell>    energyCells;
-    WarpGate                   warpGate;
-    BaseEntrance               baseEntrance;
+    std::vector<LogFile>          logFiles;
+    std::vector<EnergyCell>       energyCells;
+    std::vector<EnergyDrink>      energyDrinks;
+    std::vector<UnstablePlatform> unstablePlatforms;
+    WarpGate                      warpGate;
+    BaseEntrance                  baseEntrance;
 
     bool mercuryGoingLeft = true;
     bool mercuryWarning   = false;
@@ -80,6 +100,8 @@ public:
     int  tryCollect(const AABB& player);
     int  tryCollectLog(const AABB& player);
     int  tryCollectCell(const AABB& player);
+    int  tryCollectDrink(const AABB& player);
+    bool updateUnstablePlatforms(float dt, const AABB& playerAABB);  // returns true if player fell
 
     Vec2 rockExternalForce = {};
     Vec2 playerPos         = {};
@@ -90,6 +112,8 @@ public:
     void addPart(float x, float y);
     void addLogFile(float x, float y, int logId);
     void addEnergyCell(float x, float y);
+    void addEnergyDrink(float x, float y);
+    void addUnstablePlatform(float x, float y, float w = 64.f, float h = 14.f);
     void setWarpGate(float x, float y);
     void setBaseEntrance(float x, float y);
     void activateWarpGate() { warpGate.active = true; }

@@ -15,6 +15,7 @@ enum class Scene {
     Playing,
     BaseInterior,
     WarpActivation,
+    GameOver,
     Ending,
 };
 
@@ -90,6 +91,17 @@ private:
     bool m_marsArchiveOpen      = false;
     int  m_marsArchiveSel       = 0;
 
+    // Lives system
+    int   m_lives        = 3;
+    float m_deathFade    = 0.f;
+    int   m_deathState   = 0;   // 0=alive, 1=fade-out, 2=fade-in
+    Vec2  m_respawnPos;
+    float m_gameOverTimer = 0.f;
+
+    // Mercury
+    float m_mercuryDayCycle = 0.f;
+    std::vector<AABB> m_heatCracks;  // death-zone AABBs (Mercury)
+
     void handleEvents();
     void update(float dt);
     void render();
@@ -122,8 +134,12 @@ private:
     int  tryGrabRock();
     bool isNearRock() const;
     void checkMarsRockBoundaries();
+    void loseLife();
     std::vector<AABB> collectWalls() const;
     std::vector<AABB> collectBaseWalls() const;
+
+    void updateGameOver(float dt);
+    void renderGameOver();
 
     const PlanetPhysics& curPhysics() const { return Planets::ALL[m_currentPlanet]; }
     static void drawStarfield(SDL_Renderer* r, int w, int h, float timer);
