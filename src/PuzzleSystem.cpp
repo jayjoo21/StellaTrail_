@@ -46,13 +46,22 @@ void PuzzleSystem::tickMercuryGimmick(float dt) {
     if (m_mercuryTimer < 2.f) return;
     m_mercuryTimer = 0.f;
     if (rocks.empty()) return;
-    // Pick a random rock
     int idx = rand() % (int)rocks.size();
     if (!rocks[idx].active) return;
-    // Random direction
-    float angle = (float)(rand() % 628) / 100.f; // 0 to 2π
-    Vec2 dir = {std::cos(angle), std::sin(angle)};
-    Physics::applyImpulse(rocks[idx], dir, 120.f, m_physics);
+    // Try up to 8 angles; skip directions that push rock into player
+    for (int attempt = 0; attempt < 8; attempt++) {
+        float angle = (float)(rand() % 628) / 100.f;
+        Vec2 dir = {std::cos(angle), std::sin(angle)};
+        Vec2 toPlayer = playerPos - rocks[idx].pos;
+        float dist = toPlayer.length();
+        if (dist < 96.f && dist > 0.f) {
+            Vec2 norm = toPlayer * (1.f / dist);
+            float dot = dir.x * norm.x + dir.y * norm.y;
+            if (dot > 0.5f) continue;  // would push rock toward nearby player
+        }
+        Physics::applyImpulse(rocks[idx], dir, 120.f, m_physics);
+        break;
+    }
 }
 
 void PuzzleSystem::checkPlates() {

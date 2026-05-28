@@ -71,7 +71,8 @@ private:
     float m_marsRockFlash[5] = {};
 
     // Base interior player position
-    Vec2 m_basePlayerPos = {640.f, 550.f};
+    Vec2 m_basePlayerPos = {640.f, 480.f};
+    bool m_baseReadingBoard = false;
 
     void handleEvents();
     void update(float dt);

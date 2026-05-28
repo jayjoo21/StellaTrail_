@@ -175,6 +175,7 @@ void Game::loadPlanet(int idx) {
     for (int i = 0; i < 3; i++) m_marsZoneShown[i] = false;
 
     m_grabbedRock = -1;
+    m_baseReadingBoard = false;
     for (int i = 0; i < 5; i++) m_marsRockFlash[i] = 0.f;
 
     m_map = TileMap();
@@ -320,12 +321,31 @@ void Game::handleEvents() {
                     m_grabbedRock = tryGrabRock();
                 }
             }
+            if (sym == SDLK_e && m_scene == Scene::BaseInterior) {
+                if (m_baseReadingBoard) {
+                    m_baseReadingBoard = false;
+                } else {
+                    // Check warp gate proximity (E to warp)
+                    AABB gateProbe = {560.f, 200.f, 160.f, 160.f};
+                    if (m_puzzle.warpGate.active && m_player.getAABB().intersects(gateProbe)) {
+                        m_puzzle.warpGate.triggered = true;
+                        onPlanetCleared();
+                        return;
+                    }
+                    // Check warning board proximity (E to read)
+                    AABB boardProbe = {42.f, 100.f, 290.f, 260.f};
+                    if (m_player.getAABB().intersects(boardProbe)) {
+                        m_baseReadingBoard = true;
+                    }
+                }
+            }
             if (sym == SDLK_ESCAPE) {
                 if (m_scene == Scene::Playing || m_scene == Scene::PlanetIntro) {
                     m_grabbedRock = -1;
                     m_scene = Scene::SolarMap;
                 }
                 else if (m_scene == Scene::BaseInterior) {
+                    m_baseReadingBoard = false;
                     // Return to surface at base entrance
                     const PlanetLayout& L = LAYOUTS[m_currentPlanet];
                     m_player.pos = {L.baseEntrX - 80.f, L.baseEntrY};
@@ -422,6 +442,7 @@ void Game::updatePlaying(float dt) {
 
     handlePlayerRockInteraction();
     m_puzzle.resolveRockVsWalls(walls);
+    m_puzzle.playerPos = m_player.pos;
     m_puzzle.update(dt);
     updateCamera(dt);
 
@@ -500,23 +521,14 @@ void Game::updateBaseInterior(float dt) {
     m_player.playerFriction = savedFriction;
     m_player.externalVel    = savedExtVel;
 
-    // Check warp gate trigger (center top of base)
-    if (m_puzzle.warpGate.active) {
-        AABB gateAABB = {590.f, 60.f, 100.f, 100.f};
-        if (m_player.getAABB().intersects(gateAABB)) {
-            m_puzzle.warpGate.triggered = true;
-            onPlanetCleared();
-            return;
-        }
-    }
     // Update warp gate glow
     if (m_puzzle.warpGate.active) {
         m_puzzle.warpGate.glowTimer     += dt;
         m_puzzle.warpGate.particleTimer += dt;
     }
 
-    // Check exit portal (bottom-center)
-    AABB exitAABB = {570.f, 630.f, 140.f, 60.f};
+    // Check exit portal (bottom-center, walk-up)
+    AABB exitAABB = {560.f, 640.f, 160.f, 60.f};
     if (m_player.getAABB().intersects(exitAABB)) {
         const PlanetLayout& L = LAYOUTS[m_currentPlanet];
         m_player.pos = {L.baseEntrX - 80.f, L.baseEntrY};
@@ -534,10 +546,10 @@ void Game::updateGimmicks(float dt) {
 
     if (gimmick == PlanetGimmick::WindStorm) {
         m_windCycle += dt;
-        if (m_windCycle >= 7.0f) m_windCycle = 0.f;
+        if (m_windCycle >= 5.0f) m_windCycle = 0.f;
 
-        bool newWarning = (m_windCycle > 2.0f && m_windCycle < 5.0f);
-        bool newActive  = (m_windCycle >= 5.0f);
+        bool newWarning = (m_windCycle > 1.5f && m_windCycle < 3.5f);
+        bool newActive  = (m_windCycle >= 3.5f);
 
         // First wind warning
         if (newWarning && !m_windWarning) {
@@ -1318,103 +1330,142 @@ void Game::checkMarsRockBoundaries() {
 }
 
 void Game::renderBaseInterior() {
-    // Background: dark metal
-    SDL_SetRenderDrawColor(m_renderer, 22, 26, 34, 255);
+    SDL_SetRenderDrawColor(m_renderer, 16, 20, 28, 255);
     SDL_RenderClear(m_renderer);
 
     SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
 
+    // Header bar
+    {
+        SDL_SetRenderDrawColor(m_renderer, 20, 24, 36, 255);
+        SDL_FRect hdr = {0.f, 0.f, (float)m_screenW, 52.f};
+        SDL_RenderFillRectF(m_renderer, &hdr);
+        SDL_SetRenderDrawColor(m_renderer, 60, 90, 180, 200);
+        SDL_FRect hdrLine = {0.f, 52.f, (float)m_screenW, 2.f};
+        SDL_RenderFillRectF(m_renderer, &hdrLine);
+    }
+
     // Floor
-    SDL_SetRenderDrawColor(m_renderer, 35, 40, 50, 255);
-    SDL_FRect floor = {40.f, 650.f, 1200.f, 30.f};
-    SDL_RenderFillRectF(m_renderer, &floor);
+    SDL_SetRenderDrawColor(m_renderer, 30, 35, 46, 255);
+    SDL_FRect flr = {0.f, 620.f, (float)m_screenW, 100.f};
+    SDL_RenderFillRectF(m_renderer, &flr);
 
-    // Metal wall panels (left/right)
-    for (int i = 0; i < 5; i++) {
-        float py = 60.f + i * 120.f;
-        // Left panels
-        SDL_SetRenderDrawColor(m_renderer, 45, 52, 65, 255);
-        SDL_FRect lp = {40.f, py, 180.f, 100.f};
-        SDL_RenderFillRectF(m_renderer, &lp);
-        SDL_SetRenderDrawColor(m_renderer, 60, 70, 88, 200);
-        SDL_RenderDrawRectF(m_renderer, &lp);
-        // Right panels
-        SDL_FRect rp = {1060.f, py, 180.f, 100.f};
-        SDL_RenderFillRectF(m_renderer, &rp);
-        SDL_RenderDrawRectF(m_renderer, &rp);
+    // Left / right walls
+    SDL_SetRenderDrawColor(m_renderer, 28, 32, 44, 255);
+    SDL_FRect lwl = {0.f, 54.f, 42.f, 620.f};
+    SDL_RenderFillRectF(m_renderer, &lwl);
+    SDL_FRect rwl = {1238.f, 54.f, 42.f, 620.f};
+    SDL_RenderFillRectF(m_renderer, &rwl);
+
+    // Ceiling strip + lights
+    SDL_SetRenderDrawColor(m_renderer, 40, 48, 64, 255);
+    SDL_FRect ceil = {42.f, 54.f, 1196.f, 24.f};
+    SDL_RenderFillRectF(m_renderer, &ceil);
+    static const float LIGHTS[] = {160.f, 400.f, 640.f, 880.f, 1120.f};
+    for (float lx : LIGHTS) {
+        float gw = (std::sin(m_baseTimer * 1.8f + lx * 0.009f) + 1.f) * 0.5f;
+        SDL_SetRenderDrawColor(m_renderer, 255, 248, 215, (Uint8)(18 + 14 * gw));
+        SDL_FRect cone = {lx - 60.f, 54.f, 120.f, 120.f};
+        SDL_RenderFillRectF(m_renderer, &cone);
+        SDL_SetRenderDrawColor(m_renderer, 255, 250, 225, 210);
+        SDL_FRect bulb = {lx - 18.f, 60.f, 36.f, 10.f};
+        SDL_RenderFillRectF(m_renderer, &bulb);
     }
 
-    // Ceiling
-    SDL_SetRenderDrawColor(m_renderer, 40, 46, 58, 255);
-    SDL_FRect ceiling = {40.f, 40.f, 1200.f, 30.f};
-    SDL_RenderFillRectF(m_renderer, &ceiling);
-
-    // Ceiling lights
-    static const float LIGHT_POSITIONS[] = {200.f, 440.f, 640.f, 840.f, 1080.f};
-    for (float lx : LIGHT_POSITIONS) {
-        float glow = (std::sin(m_baseTimer * 1.5f + lx * 0.01f) + 1.f) * 0.5f;
-        SDL_SetRenderDrawColor(m_renderer, 255, 250, 220, (Uint8)(30 + 20 * glow));
-        SDL_FRect lightGlow = {lx - 50.f, 40.f, 100.f, 100.f};
-        SDL_RenderFillRectF(m_renderer, &lightGlow);
-        SDL_SetRenderDrawColor(m_renderer, 255, 252, 230, 220);
-        SDL_FRect light = {lx - 20.f, 48.f, 40.f, 12.f};
-        SDL_RenderFillRectF(m_renderer, &light);
+    // Warning board (left)
+    const float boardX = 50.f, boardY = 110.f, boardW = 280.f, boardH = 250.f;
+    {
+        SDL_SetRenderDrawColor(m_renderer, 22, 20, 8, 245);
+        SDL_FRect bg = {boardX, boardY, boardW, boardH};
+        SDL_RenderFillRectF(m_renderer, &bg);
+        SDL_SetRenderDrawColor(m_renderer, 200, 130, 20, 220);
+        SDL_RenderDrawRectF(m_renderer, &bg);
+        for (int i = 0; i < 10; i++) {
+            Uint8 sc = (i % 2 == 0) ? 220 : 70;
+            SDL_SetRenderDrawColor(m_renderer, sc, (Uint8)(sc * 0.58f), 0, 170);
+            SDL_FRect st = {boardX + i * (boardW / 10.f), boardY, boardW / 10.f, 9.f};
+            SDL_RenderFillRectF(m_renderer, &st);
+            SDL_FRect sb = {boardX + i * (boardW / 10.f), boardY + boardH - 9.f, boardW / 10.f, 9.f};
+            SDL_RenderFillRectF(m_renderer, &sb);
+        }
+        SDL_SetRenderDrawColor(m_renderer, 240, 200, 30, 200);
+        SDL_FRect icon = {boardX + boardW*0.5f - 14.f, boardY + 18.f, 28.f, 28.f};
+        SDL_RenderFillRectF(m_renderer, &icon);
+        SDL_SetRenderDrawColor(m_renderer, 22, 20, 8, 230);
+        SDL_FRect iconInner = {boardX + boardW*0.5f - 3.f, boardY + 24.f, 6.f, 14.f};
+        SDL_RenderFillRectF(m_renderer, &iconInner);
     }
 
-    // Warning sign panel (left side)
-    SDL_SetRenderDrawColor(m_renderer, 25, 22, 8, 240);
-    SDL_FRect signBg = {55.f, 180.f, 220.f, 130.f};
-    SDL_RenderFillRectF(m_renderer, &signBg);
-    SDL_SetRenderDrawColor(m_renderer, 255, 160, 20, 200);
-    SDL_RenderDrawRectF(m_renderer, &signBg);
-    // Warning stripes
-    for (int i = 0; i < 4; i++) {
-        Uint8 sc = (i % 2 == 0) ? 255 : 80;
-        SDL_SetRenderDrawColor(m_renderer, sc, (Uint8)(sc*0.63f), 0, 160);
-        SDL_FRect stripe = {55.f + i * 14.f, 180.f, 14.f, 8.f};
-        SDL_RenderFillRectF(m_renderer, &stripe);
-        SDL_FRect stripe2 = {55.f + i * 14.f, 302.f, 14.f, 8.f};
-        SDL_RenderFillRectF(m_renderer, &stripe2);
-    }
-
-    // Horizontal divider
-    SDL_SetRenderDrawColor(m_renderer, 55, 62, 78, 255);
-    SDL_FRect divider = {240.f, 300.f, 800.f, 8.f};
-    SDL_RenderFillRectF(m_renderer, &divider);
-
-    // Warp gate position in base: center-top
-    float wgx = 640.f, wgy = 110.f;
+    // Warp gate (center)
+    const float wgx = 640.f, wgy = 310.f;
     {
         bool active = m_puzzle.warpGate.active;
-        float glow = active ? (std::sin(m_puzzle.warpGate.glowTimer * 4.f) + 1.f) * 0.5f : 0.f;
+        float glow = active ? (std::sin(m_puzzle.warpGate.glowTimer * 3.5f) + 1.f) * 0.5f : 0.f;
+        SDL_SetRenderDrawColor(m_renderer, 42, 46, 60, 255);
+        SDL_FRect ped = {wgx - 60.f, wgy + 56.f, 120.f, 20.f};
+        SDL_RenderFillRectF(m_renderer, &ped);
+        SDL_SetRenderDrawColor(m_renderer, 60, 66, 88, 255);
+        SDL_RenderDrawRectF(m_renderer, &ped);
         if (!active) {
-            SDL_SetRenderDrawColor(m_renderer, 60, 60, 75, 200);
-            SDL_FRect outer = {wgx-28.f, wgy-28.f, 56.f, 56.f};
+            SDL_SetRenderDrawColor(m_renderer, 50, 50, 68, 200);
+            SDL_FRect outer = {wgx-56.f, wgy-56.f, 112.f, 112.f};
             SDL_RenderFillRectF(m_renderer, &outer);
-            SDL_SetRenderDrawColor(m_renderer, 45, 45, 58, 255);
+            SDL_SetRenderDrawColor(m_renderer, 38, 38, 52, 255);
             SDL_RenderDrawRectF(m_renderer, &outer);
-            SDL_SetRenderDrawColor(m_renderer, 38, 38, 48, 200);
-            SDL_FRect inner = {wgx-16.f, wgy-16.f, 32.f, 32.f};
+            SDL_SetRenderDrawColor(m_renderer, 30, 30, 42, 220);
+            SDL_FRect inner = {wgx-36.f, wgy-36.f, 72.f, 72.f};
             SDL_RenderFillRectF(m_renderer, &inner);
+            SDL_SetRenderDrawColor(m_renderer, 55, 55, 72, 180);
+            SDL_RenderDrawLineF(m_renderer, wgx, wgy-30.f, wgx, wgy+30.f);
+            SDL_RenderDrawLineF(m_renderer, wgx-30.f, wgy, wgx+30.f, wgy);
         } else {
-            SDL_SetRenderDrawColor(m_renderer, 80, 40, 200, (Uint8)(60 + 60 * glow));
-            SDL_FRect og = {wgx-40.f, wgy-40.f, 80.f, 80.f};
-            SDL_RenderFillRectF(m_renderer, &og);
-            SDL_SetRenderDrawColor(m_renderer, 120, 60, 255, 230);
-            SDL_FRect outer = {wgx-28.f, wgy-28.f, 56.f, 56.f};
+            SDL_SetRenderDrawColor(m_renderer, 60, 20, 180, (Uint8)(40 + 50 * glow));
+            SDL_FRect aura = {wgx-80.f, wgy-80.f, 160.f, 160.f};
+            SDL_RenderFillRectF(m_renderer, &aura);
+            SDL_SetRenderDrawColor(m_renderer, 100, 40, 240, (Uint8)(180 + 60 * glow));
+            SDL_FRect outer = {wgx-56.f, wgy-56.f, 112.f, 112.f};
             SDL_RenderFillRectF(m_renderer, &outer);
-            SDL_SetRenderDrawColor(m_renderer, (Uint8)(100+100*glow), (Uint8)(60*glow), 255, 220);
-            SDL_FRect inner = {wgx-18.f, wgy-18.f, 36.f, 36.f};
+            SDL_SetRenderDrawColor(m_renderer, (Uint8)(130+100*glow), (Uint8)(50*glow), 255, 230);
+            SDL_FRect inner = {wgx-38.f, wgy-38.f, 76.f, 76.f};
             SDL_RenderFillRectF(m_renderer, &inner);
-            // Orbit particles
-            for (int i = 0; i < 6; i++) {
-                float a = m_puzzle.warpGate.particleTimer * 2.f + i * 1.047f;
-                float pr = 36.f + 6.f * std::sin(m_puzzle.warpGate.glowTimer * 3.f + i);
-                float px = wgx + pr * std::cos(a);
-                float py = wgy + pr * std::sin(a);
-                SDL_SetRenderDrawColor(m_renderer, 180, 120, 255, (Uint8)(150 + 100 * glow));
-                SDL_FRect dot = {px-3.f, py-3.f, 6.f, 6.f};
+            SDL_SetRenderDrawColor(m_renderer, 220, 180, 255, (Uint8)(200 + 55 * glow));
+            SDL_FRect core = {wgx-16.f, wgy-16.f, 32.f, 32.f};
+            SDL_RenderFillRectF(m_renderer, &core);
+            for (int i = 0; i < 8; i++) {
+                float a = m_puzzle.warpGate.particleTimer * 2.2f + i * 0.7854f;
+                float pr = 66.f + 8.f * std::sin(m_puzzle.warpGate.glowTimer * 2.5f + i);
+                float ppx = wgx + pr * std::cos(a);
+                float ppy = wgy + pr * std::sin(a);
+                SDL_SetRenderDrawColor(m_renderer, 200, 140, 255, (Uint8)(140 + 100 * glow));
+                SDL_FRect dot = {ppx-4.f, ppy-4.f, 8.f, 8.f};
                 SDL_RenderFillRectF(m_renderer, &dot);
+            }
+        }
+    }
+
+    // Parts panel (right)
+    {
+        int partCount = LAYOUTS[m_currentPlanet].partCount;
+        const float px = 960.f, py = 110.f, pw = 280.f, ph = 250.f;
+        SDL_SetRenderDrawColor(m_renderer, 18, 22, 32, 240);
+        SDL_FRect panel = {px, py, pw, ph};
+        SDL_RenderFillRectF(m_renderer, &panel);
+        SDL_SetRenderDrawColor(m_renderer, 60, 90, 140, 200);
+        SDL_RenderDrawRectF(m_renderer, &panel);
+        for (int i = 0; i < partCount; i++) {
+            float ix = px + 24.f + i * 56.f;
+            float iy = py + ph * 0.55f;
+            bool got = (i < m_planetPartsFound);
+            if (got) {
+                SDL_SetRenderDrawColor(m_renderer, 255, 210, 40, 255);
+                fillDiamond(m_renderer, ix, iy, 12.f);
+                SDL_SetRenderDrawColor(m_renderer, 255, 255, 160, 255);
+                fillDiamond(m_renderer, ix, iy, 5.f);
+            } else {
+                SDL_SetRenderDrawColor(m_renderer, 55, 60, 80, 200);
+                fillDiamond(m_renderer, ix, iy, 12.f);
+                SDL_SetRenderDrawColor(m_renderer, 40, 44, 60, 255);
+                fillDiamond(m_renderer, ix, iy, 5.f);
             }
         }
     }
@@ -1422,70 +1473,108 @@ void Game::renderBaseInterior() {
     // Exit portal (bottom center)
     {
         float ex = 640.f, ey = 645.f;
-        float pulse = (std::sin(m_baseTimer * 2.f) + 1.f) * 0.5f;
-        SDL_SetRenderDrawColor(m_renderer, 30, 60, 160, (Uint8)(80 + 60 * pulse));
-        SDL_FRect eGlow = {ex - 70.f, ey - 30.f, 140.f, 60.f};
+        float pulse = (std::sin(m_baseTimer * 2.2f) + 1.f) * 0.5f;
+        SDL_SetRenderDrawColor(m_renderer, 20, 50, 150, (Uint8)(70 + 55 * pulse));
+        SDL_FRect eGlow = {ex - 80.f, ey - 26.f, 160.f, 52.f};
         SDL_RenderFillRectF(m_renderer, &eGlow);
-        SDL_SetRenderDrawColor(m_renderer, 60, 120, 255, (Uint8)(160 + 60 * pulse));
-        SDL_FRect eFrame = {ex - 50.f, ey - 20.f, 100.f, 40.f};
+        SDL_SetRenderDrawColor(m_renderer, 55, 110, 240, (Uint8)(155 + 65 * pulse));
+        SDL_FRect eFrame = {ex - 56.f, ey - 18.f, 112.f, 36.f};
         SDL_RenderFillRectF(m_renderer, &eFrame);
-        SDL_SetRenderDrawColor(m_renderer, 100, 170, 255, 255);
+        SDL_SetRenderDrawColor(m_renderer, 120, 185, 255, 255);
         SDL_RenderDrawRectF(m_renderer, &eFrame);
     }
 
     SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
 
-    // Warning sign text
     if (m_ui.getFont()) {
-        m_ui.renderText(m_renderer, m_ui.getFont(),
-                        Planets::BASE_HINTS[m_currentPlanet],
-                        165.f, 200.f,
-                        {255, 200, 80, 230}, true);
-    }
-
-    // Warp gate label
-    if (m_ui.getFont()) {
-        const char* gateLabel = m_puzzle.warpGate.active
-            ? "워프 게이트 - 활성화됨"
-            : "워프 게이트 - 부품 필요";
-        SDL_Color glc = m_puzzle.warpGate.active
-            ? SDL_Color{150, 100, 255, 255}
-            : SDL_Color{100, 100, 120, 200};
-        m_ui.renderText(m_renderer, m_ui.getFont(), gateLabel,
-                        640.f, 150.f, glc, true);
-    }
-
-    // Exit label
-    if (m_ui.getFont()) {
-        m_ui.renderText(m_renderer, m_ui.getFont(), "[ 외부로 나가기 ]",
-                        640.f, 656.f, {100, 160, 255, 200}, true);
-    }
-
-    // Parts status panel (top-right)
-    {
-        int partCount = LAYOUTS[m_currentPlanet].partCount;
-        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
-        SDL_SetRenderDrawColor(m_renderer, 0, 0, 0, 160);
-        SDL_FRect panel = {1050.f, 180.f, 190.f, 80.f};
-        SDL_RenderFillRectF(m_renderer, &panel);
-        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
-        if (m_ui.getFont()) {
+        // Header text
+        const char* pName = Planets::ALL[m_currentPlanet].name;
+        m_ui.renderText(m_renderer, m_ui.getFont(), pName,
+                        m_screenW * 0.5f, 16.f, {180, 210, 255, 240}, true);
+        {
             char buf[64];
-            std::snprintf(buf, sizeof(buf), "수집 부품: %d / %d",
-                          m_planetPartsFound, partCount);
+            int partCount = LAYOUTS[m_currentPlanet].partCount;
+            if (m_puzzle.warpGate.active)
+                std::snprintf(buf, sizeof(buf), "게이트 활성화 완료!");
+            else
+                std::snprintf(buf, sizeof(buf), "부품 수집 (%d/%d)", m_planetPartsFound, partCount);
+            SDL_Color hsc = m_puzzle.warpGate.active
+                ? SDL_Color{100, 255, 160, 230} : SDL_Color{200, 190, 100, 210};
             m_ui.renderText(m_renderer, m_ui.getFont(), buf,
-                            1145.f, 195.f, {200, 220, 255, 220}, true);
-            const char* status = m_puzzle.warpGate.active
-                ? "게이트 활성화 완료!" : "외부 탐색 필요";
-            SDL_Color sc = m_puzzle.warpGate.active
-                ? SDL_Color{100, 255, 150, 220} : SDL_Color{200, 180, 80, 200};
-            m_ui.renderText(m_renderer, m_ui.getFont(), status,
-                            1145.f, 222.f, sc, true);
+                            m_screenW * 0.5f + 180.f, 16.f, hsc, true);
         }
+
+        // Board title + E-hint
+        m_ui.renderText(m_renderer, m_ui.getFont(), "주의사항",
+                        boardX + boardW * 0.5f, boardY + 60.f, {240, 200, 60, 230}, true);
+        AABB boardProbe = {42.f, 100.f, 290.f, 260.f};
+        if (m_player.getAABB().intersects(boardProbe)) {
+            float blink = 0.6f + 0.4f * std::sin(m_baseTimer * 4.f);
+            m_ui.renderText(m_renderer, m_ui.getFont(), "E: 읽기",
+                            boardX + boardW * 0.5f, boardY + boardH + 16.f,
+                            {255, 220, 80, (Uint8)(220 * blink)}, true);
+        }
+
+        // Warp gate label
+        const char* gateLabel = m_puzzle.warpGate.active
+            ? "워프 게이트 [활성]" : "워프 게이트 [비활성]";
+        SDL_Color glc = m_puzzle.warpGate.active
+            ? SDL_Color{180, 130, 255, 255} : SDL_Color{90, 90, 110, 190};
+        m_ui.renderText(m_renderer, m_ui.getFont(), gateLabel, wgx, wgy + 80.f, glc, true);
+
+        // E: 워프! prompt when active + near
+        if (m_puzzle.warpGate.active) {
+            AABB gateProbe = {560.f, 200.f, 160.f, 160.f};
+            if (m_player.getAABB().intersects(gateProbe)) {
+                float blink = 0.6f + 0.4f * std::sin(m_baseTimer * 5.f);
+                m_ui.renderText(m_renderer, m_ui.getFont(), "E: 워프!",
+                                wgx, wgy - 80.f,
+                                {220, 180, 255, (Uint8)(240 * blink)}, true);
+            }
+        }
+
+        // Parts panel title
+        m_ui.renderText(m_renderer, m_ui.getFont(), "수집 부품",
+                        960.f + 140.f, 110.f + 30.f, {160, 200, 255, 220}, true);
+
+        // Exit label
+        m_ui.renderText(m_renderer, m_ui.getFont(), "[ 외부로 나가기 ]",
+                        640.f, 661.f, {100, 160, 255, 200}, true);
     }
 
     // Player
     m_player.render(m_renderer, 0.f, 0.f);
+
+    // Board reading overlay
+    if (m_baseReadingBoard && m_ui.getFont()) {
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(m_renderer, 0, 0, 0, 190);
+        SDL_FRect dimmer = {0.f, 0.f, (float)m_screenW, (float)m_screenH};
+        SDL_RenderFillRectF(m_renderer, &dimmer);
+        float ox = m_screenW * 0.5f - 280.f, oy = m_screenH * 0.5f - 130.f;
+        float ow = 560.f, oh = 260.f;
+        SDL_SetRenderDrawColor(m_renderer, 14, 12, 4, 245);
+        SDL_FRect popup = {ox, oy, ow, oh};
+        SDL_RenderFillRectF(m_renderer, &popup);
+        SDL_SetRenderDrawColor(m_renderer, 220, 160, 20, 230);
+        SDL_RenderDrawRectF(m_renderer, &popup);
+        for (int i = 0; i < 10; i++) {
+            Uint8 sc = (i % 2 == 0) ? 200 : 60;
+            SDL_SetRenderDrawColor(m_renderer, sc, (Uint8)(sc * 0.58f), 0, 180);
+            SDL_FRect st = {ox + i * (ow / 10.f), oy, ow / 10.f, 8.f};
+            SDL_RenderFillRectF(m_renderer, &st);
+        }
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
+        m_ui.renderText(m_renderer, m_ui.getFont(), "주의사항",
+                        ox + ow * 0.5f, oy + 24.f, {240, 200, 50, 240}, true);
+        m_ui.renderText(m_renderer, m_ui.getFont(),
+                        Planets::BASE_HINTS[m_currentPlanet],
+                        ox + ow * 0.5f, oy + oh * 0.5f, {220, 215, 180, 230}, true);
+        float blink = 0.55f + 0.45f * std::sin(m_baseTimer * 4.5f);
+        m_ui.renderText(m_renderer, m_ui.getFont(), "[ E: 닫기 ]",
+                        ox + ow * 0.5f, oy + oh - 28.f,
+                        {180, 210, 255, (Uint8)(220 * blink)}, true);
+    }
 }
 
 void Game::renderWarpActivation() {

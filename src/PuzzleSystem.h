@@ -60,6 +60,7 @@ public:
     int  tryCollect(const AABB& player);
 
     Vec2 rockExternalForce = {};
+    Vec2 playerPos         = {};
 
     void addPressurePlate(float x, float y, float w, float h, int doorId);
     void addDoor(float x, float y, float w, float h);

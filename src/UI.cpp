@@ -25,14 +25,14 @@ namespace Planets {
         "기믹: 주기 강풍 (5초 주기, 3초 예고)",
     };
     const char* BASE_HINTS[8] = {
-        "⚠ 외부경고: 바위가 3초마다 자동이동합니다.\n타이밍을 맞춰 압력판에 올려라.",
-        "⚠ 외부경고: 시야 방해, 미니맵 불능.\n화면 가장자리까지 천천히 탐색하라.",
-        "⚠ 외부안내: 감성 오브젝트 구역.\n행성의 흔적을 천천히 살펴보라.",
-        "⚠ 튜토리얼: WASD로 이동. 바위를 밀어\n압력판에 올리면 문이 열린다.",
-        "⚠ 외부경고: 고중력 구역. 바위 질량 3배.\n이동속도 감소. 힘을 더 써야 한다.",
-        "⚠ 외부경고: 마찰 없음. 바위가 멈추지 않는다.\n방향과 힘 조절 필수.",
-        "⚠ 외부경고: 좌측 편향 중력.\n모든 물체가 왼쪽으로 밀린다. 역방향 활용.",
-        "⚠ 외부경고: 강풍 주기 5초. 3초 전 경보 발령.\n바위를 방패로, 강풍 타이밍을 피하라.",
+        "열기로 바위가 저절로 움직여. 타이밍을 잘 봐.",
+        "대기가 짙어서 앞이 잘 안 보여. 천천히.",
+        "폐허 속 어딘가에 부품이 숨겨져 있어.",
+        "중력이 약해. 바위를 세게 밀면 멀리 날아가.",
+        "중력이 너무 강해. 힘을 더 써야 해.",
+        "얼음이라 엄청 미끄러워. 벽을 이용해.",
+        "계속 옆으로 밀려. 그걸 역이용해봐.",
+        "강풍이 주기적으로 불어. 타이밍이 전부야.",
     };
 }
 
@@ -333,19 +333,22 @@ void UI::renderStellaBubble(SDL_Renderer* r, int sw, int sh,
 }
 
 void UI::renderTitleScreen(SDL_Renderer* r, int sw, int sh, float timer) {
+    // Title shadow + main text
     if (m_fontBig) {
         renderText(r, m_fontBig, "STELLA TRAIL",
-                   sw/2.f, sh/2.f - 90.f, {255, 230, 120, 255}, true);
-        renderText(r, m_fontBig, "별의 여정",
-                   sw/2.f, sh/2.f - 48.f, {180, 200, 255, 220}, true);
+                   sw/2.f + 3.f, sh/2.f - 88.f, {0, 0, 0, 130}, true);
+        renderText(r, m_fontBig, "STELLA TRAIL",
+                   sw/2.f, sh/2.f - 91.f, {255, 235, 130, 255}, true);
     }
     if (m_font) {
-        float p = (std::sin(timer * 3.f) + 1.f) * 0.5f;
-        SDL_Color ec = {200, 212, 255, (Uint8)(100 + 155 * p)};
-        renderText(r, m_font, "PRESS  ENTER",
-                   sw/2.f, sh/2.f - 6.f, ec, true);
-        renderText(r, m_font, "WASD: 이동   바위를 압력판에 올려라   ESC: 뒤로",
-                   sw/2.f, sh - 32.f, {90, 105, 130, 180}, true);
+        // Decorative separator line
+        float p = (std::sin(timer * 2.6f) + 1.f) * 0.5f;
+        SDL_Color ec = {195, 215, 255, (Uint8)(110 + 140 * p)};
+        renderText(r, m_font, "—  —  —  PRESS ENTER  —  —  —",
+                   sw/2.f, sh/2.f - 44.f, ec, true);
+        // Controls hint (bottom, subtle)
+        renderText(r, m_font, "WASD : Move    Push rocks onto plates    ESC : Quit",
+                   sw/2.f, sh - 30.f, {72, 88, 115, 155}, true);
     }
 }
 
