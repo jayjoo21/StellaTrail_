@@ -37,9 +37,16 @@ namespace Planets {
 }
 
 bool UI::init(SDL_Renderer* /*r*/, const std::string& fontPath) {
-    if (TTF_Init() < 0) return false;
+    if (TTF_Init() < 0) {
+        SDL_Log("TTF_Init failed: %s", TTF_GetError());
+        return false;
+    }
     m_font    = TTF_OpenFont(fontPath.c_str(), 16);
     m_fontBig = TTF_OpenFont(fontPath.c_str(), 28);
+    if (!m_font || !m_fontBig) {
+        SDL_Log("Font load failed [%s]: %s", fontPath.c_str(), TTF_GetError());
+        // Game continues without text rather than crashing
+    }
     return true;
 }
 
