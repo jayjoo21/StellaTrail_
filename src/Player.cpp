@@ -2,9 +2,12 @@
 #include <cmath>
 #include <algorithm>
 
-void Player::startJump() {
+void Player::startJump(Vec2 dir) {
     jumpTimer    = JUMP_DURATION;
     jumpCooldown = 1.0f;
+    // 2 tiles (64px) in jump direction over JUMP_DURATION
+    float spd = (dir.length() > 0.f) ? 64.f / JUMP_DURATION : 0.f;
+    jumpVel = (dir.length() > 0.f) ? dir.normalized() * spd : Vec2{};
 }
 
 void Player::update(float dt, const Uint8* keys, const std::vector<AABB>& walls) {
@@ -35,7 +38,8 @@ void Player::update(float dt, const Uint8* keys, const std::vector<AABB>& walls)
     }
 
     // External velocity (wind/drift — bypasses friction)
-    Vec2 totalVel = vel + externalVel;
+    // During a jump, jumpVel carries horizontal momentum over hazards
+    Vec2 totalVel = vel + externalVel + (jumpTimer > 0.f ? jumpVel : Vec2{});
 
     Vec2 candidate = pos + totalVel * dt;
     resolveWalls(candidate, walls);

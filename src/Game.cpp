@@ -451,7 +451,20 @@ void Game::handleEvents() {
                         }
                     }
                 }
-                if (!onDanger) m_player.startJump();
+                if (!onDanger) {
+                    const Uint8* ks = SDL_GetKeyboardState(nullptr);
+                    Vec2 jdir{};
+                    if (ks[SDL_SCANCODE_W] || ks[SDL_SCANCODE_UP])    jdir.y -= 1.f;
+                    if (ks[SDL_SCANCODE_S] || ks[SDL_SCANCODE_DOWN])  jdir.y += 1.f;
+                    if (ks[SDL_SCANCODE_A] || ks[SDL_SCANCODE_LEFT])  jdir.x -= 1.f;
+                    if (ks[SDL_SCANCODE_D] || ks[SDL_SCANCODE_RIGHT]) jdir.x += 1.f;
+                    if (jdir.length() < 0.01f) {
+                        // no key held: jump in facing direction
+                        float rad = m_player.facing * 3.14159f / 180.f;
+                        jdir = {std::cos(rad), std::sin(rad)};
+                    }
+                    m_player.startJump(jdir);
+                }
             }
             if (sym == SDLK_e && m_scene == Scene::BaseInterior) {
                 if (m_marsArchiveOpen) {
@@ -1338,22 +1351,32 @@ void Game::renderPlaying() {
 
         // 협곡 돌다리: 각 협곡마다 상단 1/3, 하단 1/3 지점에 1개씩, 총 2개
         static const float BRIDGE_CENTERS[] = {MARS_BRIDGE_UPPER_Y, MARS_BRIDGE_LOWER_Y};
+        static const float BRIDGE_W = 40.f;  // 4px overhang on each side of 32px canyon
         for (int ci = 0; ci < 3; ci++) {
-            float bwx = CANYON_WORLD_X[ci] - m_camX;
+            float bwx = CANYON_WORLD_X[ci] - 4.f - m_camX;  // 4px left of canyon edge
             for (float bcy : BRIDGE_CENTERS) {
                 float bwy = bcy - MARS_BRIDGE_H * 0.5f - m_camY;
-                SDL_SetRenderDrawColor(m_renderer, 88, 76, 62, 248);
-                SDL_FRect bridge = {bwx, bwy, MARS_CANYON_W, MARS_BRIDGE_H};
+                // Pulsing warm glow behind bridge
+                SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
+                Uint8 ga = (Uint8)(80 + 40 * std::sin(m_titleTimer * 4.f));
+                SDL_SetRenderDrawColor(m_renderer, 255, 210, 100, ga);
+                SDL_FRect glow = {bwx - 4.f, bwy - 3.f, BRIDGE_W + 8.f, MARS_BRIDGE_H + 6.f};
+                SDL_RenderFillRectF(m_renderer, &glow);
+                SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
+                // Bridge body — bright warm sandy stone
+                SDL_SetRenderDrawColor(m_renderer, 205, 175, 125, 255);
+                SDL_FRect bridge = {bwx, bwy, BRIDGE_W, MARS_BRIDGE_H};
                 SDL_RenderFillRectF(m_renderer, &bridge);
                 // Stone texture lines
-                SDL_SetRenderDrawColor(m_renderer, 66, 55, 43, 200);
-                for (float ly = bwy + 8.f; ly < bwy + MARS_BRIDGE_H; ly += 9.f)
-                    SDL_RenderDrawLineF(m_renderer, bwx + 2.f, ly, bwx + MARS_CANYON_W - 2.f, ly);
-                // Top highlight
-                SDL_SetRenderDrawColor(m_renderer, 118, 104, 88, 230);
-                SDL_RenderDrawLineF(m_renderer, bwx, bwy, bwx + MARS_CANYON_W, bwy);
+                SDL_SetRenderDrawColor(m_renderer, 170, 140, 90, 220);
+                for (float ly = bwy + 9.f; ly < bwy + MARS_BRIDGE_H; ly += 9.f)
+                    SDL_RenderDrawLineF(m_renderer, bwx + 3.f, ly, bwx + BRIDGE_W - 3.f, ly);
+                // Top highlight (lighter edge)
+                SDL_SetRenderDrawColor(m_renderer, 235, 210, 165, 255);
+                SDL_RenderDrawLineF(m_renderer, bwx, bwy, bwx + BRIDGE_W, bwy);
+                SDL_RenderDrawLineF(m_renderer, bwx, bwy + 1.f, bwx + BRIDGE_W, bwy + 1.f);
                 // Border
-                SDL_SetRenderDrawColor(m_renderer, 48, 40, 30, 215);
+                SDL_SetRenderDrawColor(m_renderer, 130, 100, 60, 255);
                 SDL_RenderDrawRectF(m_renderer, &bridge);
             }
         }

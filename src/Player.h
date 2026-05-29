@@ -23,8 +23,9 @@ public:
     // Jump state
     float jumpTimer    = 0.f;   // counts down from JUMP_DURATION; >0 = airborne
     float jumpCooldown = 0.f;   // 1s cooldown between jumps
+    Vec2  jumpVel      = {};    // horizontal velocity stored at jump start
     bool  isAirborne() const { return jumpTimer > 0.f; }
-    void  startJump();
+    void  startJump(Vec2 dir);
 
     void update(float dt, const Uint8* keys, const std::vector<AABB>& walls);
     void render(SDL_Renderer* r, float camX, float camY);
