@@ -221,6 +221,14 @@ void Game::loadPlanet(int idx) {
         m_puzzle.addLogFile(780.f, 250.f, 2);
         // Energy drink
         m_puzzle.addEnergyDrink(500.f, 180.f);
+        // Meteor-triggered bonus puzzle (goal zone): plate + small door + energy drink
+        m_puzzle.addPressurePlate(1000.f, 555.f, 48.f, 16.f, -1);  // meteor-only (no door link via PuzzleSystem)
+        m_puzzle.addDoor(1012.f, 390.f, 32.f, 196.f);               // door 3 = meteor bonus door
+        m_puzzle.addEnergyDrink(1018.f, 366.f);                     // bonus energy drink behind door 3
+        m_marsMeteorPlateIdx = (int)m_puzzle.plates.size() - 1;
+        m_marsMeteorites.clear();
+        m_marsNextMeteor = 5.f + (float)(rand() % 30) / 10.f;
+        m_marsMeteorDoorOpen = false;
         // Reset Mars log state
         for (int i = 0; i < 3; i++) m_marsLogsCollected[i] = false;
         m_marsLogReading   = -1;
@@ -274,7 +282,13 @@ void Game::loadPlanet(int idx) {
         m_energyCellsFound = 0;
         m_resetFade  = 0.f;
         m_resetState = 0;
-        m_mercuryDayCycle = 0.f;
+        m_mercuryDayCycle       = 0.f;
+        m_mercurySolarCycle     = 0.f;
+        m_mercurySolarWarning   = false;
+        m_mercurySolarFlareActive = false;
+        m_solarFlareTimer       = 0.f;
+        m_solarFlareTint        = 0.f;
+        m_solarBeams.clear();
         // Energy drinks
         m_puzzle.addEnergyDrink(288.f, 430.f);
         m_puzzle.addEnergyDrink(832.f, 400.f);
@@ -651,12 +665,11 @@ void Game::updatePlaying(float dt) {
         } else {
             msg = GENERIC_POPUPS[s_popupIdx++ % 4];
         }
-        m_ui.showPopup(msg, (float)(m_screenW/2), (float)(m_screenH - 120));
+        m_ui.showNotification(msg, NotifType::Normal);
 
         if (m_planetPartsFound >= LAYOUTS[m_currentPlanet].partCount) {
             m_puzzle.activateWarpGate();
-            m_ui.showPopup("기지로 돌아가 워프 게이트를 활성화하자!",
-                           (float)(m_screenW/2), (float)(m_screenH - 120));
+            m_ui.showNotification("기지로 돌아가 워프 게이트를 활성화하자!", NotifType::Warning);
         }
     }
 
@@ -674,7 +687,7 @@ void Game::updatePlaying(float dt) {
         int cellIdx = m_puzzle.tryCollectCell(m_player.getAABB());
         if (cellIdx >= 0) {
             m_energyCellsFound++;
-            m_ui.showPopup("에너지 셀 획득!", (float)(m_screenW/2), (float)(m_screenH - 120));
+            m_ui.showNotification("에너지 셀 획득!", NotifType::Normal);
         }
 
         // Reset state machine: 1=fade out, 2=restore+fade in
@@ -697,6 +710,14 @@ void Game::updatePlaying(float dt) {
             }
         }
     }
+
+    // Mars meteor shower update
+    if (m_currentPlanet == 3 && m_deathState == 0)
+        updateMarsMeteorites(dt);
+
+    // Mercury solar flare update
+    if (m_currentPlanet == 0 && m_deathState == 0)
+        updateMercurySolarFlare(dt);
 
     // Mars zone transition hints + boundary auto-reset
     if (m_currentPlanet == 3) {
@@ -739,7 +760,7 @@ void Game::updatePlaying(float dt) {
         int drinkIdx = m_puzzle.tryCollectDrink(m_player.getAABB());
         if (drinkIdx >= 0) {
             if (m_lives < 3) m_lives++;
-            m_ui.showPopup("에너지 드링크! 목숨 +1", (float)(m_screenW/2), (float)(m_screenH - 120));
+            m_ui.showNotification("에너지 드링크! 목숨 +1", NotifType::Normal);
         }
     }
 
@@ -1526,6 +1547,18 @@ void Game::renderPlaying() {
                 SDL_RenderDrawLineF(m_renderer, upx + upw*0.2f, upy - uph*0.5f,
                                     upx + upw*0.4f, upy + uph*0.5f);
             }
+            // Countdown number above shaking platform
+            if (up.state == 1 && m_ui.getFont()) {
+                int cd = std::max(1, std::min(3, (int)std::ceil(up.timer)));
+                char cdbuf[4];
+                std::snprintf(cdbuf, sizeof(cdbuf), "%d", cd);
+                SDL_Color cdCol;
+                if      (cd == 1) cdCol = {255, 60,  60,  255};
+                else if (cd == 2) cdCol = {255, 160, 40,  255};
+                else              cdCol = {255, 220, 50,  255};
+                m_ui.renderText(m_renderer, m_ui.getFont(), cdbuf,
+                                upx, upy - uph*0.5f - 18.f, cdCol, true);
+            }
         }
         SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
     }
@@ -1758,6 +1791,123 @@ void Game::renderPlaying() {
         }
     }
 
+    // Mars: meteor shower rendering (shadows, falling bodies, impact dust)
+    if (m_currentPlanet == 3) {
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
+        for (const auto& met : m_marsMeteorites) {
+            if (!met.active) continue;
+            float sx = met.targetX - m_camX;
+            float sy = met.landY   - m_camY;
+
+            if (met.warnTimer > 0.f) {
+                // Shadow warning circle on ground
+                float progress = 1.f - met.warnTimer / 1.5f;
+                float radius   = 8.f + 22.f * progress;
+                Uint8 shadowA  = (Uint8)(60 + 180 * progress);
+                SDL_SetRenderDrawColor(m_renderer, 200, 30, 10, shadowA);
+                fillCircle(m_renderer, sx, sy, radius);
+                SDL_SetRenderDrawColor(m_renderer, 255, 80, 30, (Uint8)(shadowA * 0.5f));
+                fillCircle(m_renderer, sx, sy, radius * 0.4f);
+
+                // Falling meteor body
+                float meteY = met.y - m_camY;
+                if (meteY > -30.f && meteY < (float)m_screenH + 30.f) {
+                    // Fire trail (above meteor)
+                    for (int fi = 4; fi >= 1; fi--) {
+                        float tr = 9.f - fi * 1.6f;
+                        if (tr <= 0.f) continue;
+                        Uint8 fa = (Uint8)(210 - fi * 40);
+                        SDL_SetRenderDrawColor(m_renderer, 255, (Uint8)(180 - fi * 30), 20, fa);
+                        fillCircle(m_renderer, sx, meteY - fi * 9.f, tr);
+                    }
+                    // Meteor rock body
+                    SDL_SetRenderDrawColor(m_renderer, 70, 50, 30, 245);
+                    fillCircle(m_renderer, sx, meteY, 12.f);
+                    SDL_SetRenderDrawColor(m_renderer, 110, 80, 50, 220);
+                    fillCircle(m_renderer, sx, meteY, 8.f);
+                    SDL_SetRenderDrawColor(m_renderer, 160, 130, 90, 180);
+                    fillCircle(m_renderer, sx - 3.f, meteY - 3.f, 4.f);
+                }
+            } else if (met.landed) {
+                // Dust particles
+                for (const auto& d : met.dust) {
+                    float dx = d.x - m_camX, dy = d.y - m_camY;
+                    float dalpha = std::max(0.f, d.life / d.maxLife);
+                    Uint8 da = (Uint8)(200.f * dalpha);
+                    SDL_SetRenderDrawColor(m_renderer, 160, 120, 80, da);
+                    SDL_FRect dot = {dx - 2.f, dy - 2.f, 4.f, 4.f};
+                    SDL_RenderFillRectF(m_renderer, &dot);
+                    // Some bright orange sparks
+                    SDL_SetRenderDrawColor(m_renderer, 220, 100, 30, (Uint8)(da * 0.6f));
+                    SDL_FRect spark = {dx - 1.f, dy - 1.f, 2.f, 2.f};
+                    SDL_RenderFillRectF(m_renderer, &spark);
+                }
+                // Impact crater glow
+                if (met.dustTimer > 0.f) {
+                    float cratA = std::min(1.f, met.dustTimer / 1.5f);
+                    SDL_SetRenderDrawColor(m_renderer, 180, 80, 30, (Uint8)(90 * cratA));
+                    fillCircle(m_renderer, sx, sy, 20.f);
+                    SDL_SetRenderDrawColor(m_renderer, 50, 30, 10, (Uint8)(160 * cratA));
+                    fillCircle(m_renderer, sx, sy, 13.f);
+                }
+            }
+        }
+
+        // Meteor plate special visual (orange/red, distinct from regular plates)
+        if (m_marsMeteorPlateIdx >= 0 &&
+            m_marsMeteorPlateIdx < (int)m_puzzle.plates.size()) {
+            const auto& mp = m_puzzle.plates[m_marsMeteorPlateIdx];
+            float ppx = mp.area.x - m_camX, ppy = mp.area.y - m_camY;
+            float ppw = mp.area.w, pph = mp.area.h;
+            float pulse2 = (std::sin(m_titleTimer * 4.f) + 1.f) * 0.5f;
+            SDL_SetRenderDrawColor(m_renderer, (Uint8)(110 + 60*pulse2), 35, 15, 230);
+            SDL_FRect mpRf = {ppx, ppy, ppw, pph};
+            SDL_RenderFillRectF(m_renderer, &mpRf);
+            SDL_SetRenderDrawColor(m_renderer, 255, 100, 50, 210);
+            SDL_RenderDrawRectF(m_renderer, &mpRf);
+            // Crosshair target symbol
+            SDL_SetRenderDrawColor(m_renderer, 255, 150, 80, 190);
+            SDL_RenderDrawLineF(m_renderer, ppx + ppw*0.5f, ppy + 2.f,
+                                ppx + ppw*0.5f, ppy + pph - 2.f);
+            SDL_RenderDrawLineF(m_renderer, ppx + 2.f, ppy + pph*0.5f,
+                                ppx + ppw - 2.f, ppy + pph*0.5f);
+        }
+
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
+    }
+
+    // Mercury: solar flare orange tint + beams (rendered before HUD, after world)
+    if (m_currentPlanet == 0) {
+        if (m_solarFlareTint > 0.f) {
+            SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
+            SDL_SetRenderDrawColor(m_renderer, 255, 120, 20, (Uint8)(70 * m_solarFlareTint));
+            SDL_FRect full = {0.f, 0.f, (float)m_screenW, (float)m_screenH};
+            SDL_RenderFillRectF(m_renderer, &full);
+            SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
+        }
+        if (m_mercurySolarFlareActive && !m_solarBeams.empty()) {
+            SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
+            const float BEAM_H = 28.f;
+            for (const auto& b : m_solarBeams) {
+                if (b.y > (float)m_screenH + BEAM_H) continue;
+                if (b.y + BEAM_H < -BEAM_H) continue;
+                // Outer glow
+                SDL_SetRenderDrawColor(m_renderer, 255, 160, 40, 55);
+                SDL_FRect glowRf = {0.f, b.y - 8.f, (float)m_screenW, BEAM_H + 16.f};
+                SDL_RenderFillRectF(m_renderer, &glowRf);
+                // Main beam
+                SDL_SetRenderDrawColor(m_renderer, 255, 180, 50, 210);
+                SDL_FRect beamRf = {0.f, b.y, (float)m_screenW, BEAM_H};
+                SDL_RenderFillRectF(m_renderer, &beamRf);
+                // Bright center highlight
+                SDL_SetRenderDrawColor(m_renderer, 255, 240, 160, 240);
+                SDL_FRect ctrRf = {0.f, b.y + BEAM_H*0.35f, (float)m_screenW, BEAM_H*0.3f};
+                SDL_RenderFillRectF(m_renderer, &ctrRf);
+            }
+            SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
+        }
+    }
+
     // Venus haze
     if (curPhysics().gimmick == PlanetGimmick::HazeVision) {
         SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
@@ -1842,10 +1992,18 @@ void Game::renderPlaying() {
                 m_windWarning,
                 m_stellaText, stellaAlpha);
 
-    // Lives HUD (hearts, top-left)
+    // Lives HUD (hearts panel, below planet/gravity panel)
     {
+        const auto& ac2 = curPhysics().ambientColor;
         SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
-        float hx0 = 24.f, hy0 = 28.f, hs = 11.f, gap = 28.f;
+        SDL_SetRenderDrawColor(m_renderer, 8, 10, 20, 150);
+        SDL_FRect hPanel = {8.f, 58.f, 110.f, 30.f};
+        SDL_RenderFillRectF(m_renderer, &hPanel);
+        SDL_SetRenderDrawColor(m_renderer, ac2.r, ac2.g, ac2.b, 150);
+        SDL_FRect hAccent = {8.f, 58.f, 4.f, 30.f};
+        SDL_RenderFillRectF(m_renderer, &hAccent);
+
+        float hx0 = 24.f, hy0 = 73.f, hs = 10.f, gap = 26.f;
         for (int i = 0; i < 3; i++) {
             bool filled = (i < m_lives);
             float pulse = (m_lives == 1 && filled)
@@ -1856,17 +2014,25 @@ void Game::renderPlaying() {
             drawHeart(m_renderer, hx0 + i * gap, hy0, hs);
         }
         SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
-        // 1-life warning text
-        if (m_lives == 1 && m_ui.getFont()) {
-            float blink = 0.5f + 0.5f * std::sin(m_titleTimer * 5.f);
-            SDL_Color wc = {255, 80, 80, (Uint8)(220 * blink)};
-            m_ui.renderText(m_renderer, m_ui.getFont(), "위험! 목숨 1개 남았어!",
-                            (float)m_screenW * 0.5f, 14.f, wc, true);
-        }
     }
 
     // Mercury-specific UI
     if (m_currentPlanet == 0) {
+        // Solar flare warning text (left side, distinct from notification)
+        if (m_mercurySolarWarning && m_ui.getFont()) {
+            float wPulse = 0.5f + 0.5f * std::sin(m_titleTimer * 7.f);
+            SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
+            SDL_SetRenderDrawColor(m_renderer, 160, 60, 5, (Uint8)(150 * wPulse));
+            SDL_FRect wBg = {8.f, 122.f, 246.f, 38.f};
+            SDL_RenderFillRectF(m_renderer, &wBg);
+            SDL_SetRenderDrawColor(m_renderer, 255, 140, 40, (Uint8)(220 * wPulse));
+            SDL_RenderDrawRectF(m_renderer, &wBg);
+            SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
+            SDL_Color wc = {255, 210, 100, (Uint8)(230 * wPulse)};
+            m_ui.renderText(m_renderer, m_ui.getFont(), "⚠ 태양 플레어 경보!",
+                            8.f + 123.f, 132.f, wc, true);
+        }
+
         SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
 
         // Warning particles before phase switch
@@ -2541,9 +2707,176 @@ void Game::renderEnding() {
     m_ui.renderEnding(m_renderer, m_screenW, m_screenH, m_endingTimer);
 }
 
+void Game::updateMarsMeteorites(float dt) {
+    // Update existing meteors
+    for (auto& met : m_marsMeteorites) {
+        if (!met.active) continue;
+
+        if (met.warnTimer > 0.f) {
+            met.warnTimer -= dt;
+            float progress = 1.f - met.warnTimer / 1.5f;
+            met.y = -50.f + (met.landY + 50.f) * progress;
+
+            if (met.warnTimer <= 0.f) {
+                met.warnTimer = 0.f;
+                met.landed    = true;
+                met.dustTimer = 1.8f;
+
+                // Spawn dust particles
+                for (int i = 0; i < 10; i++) {
+                    MeteorDust d;
+                    d.x = met.targetX + (float)((rand() % 20) - 10);
+                    d.y = met.landY;
+                    float angle = (float)i / 10.f * 6.28318f;
+                    float speed = 40.f + (float)(rand() % 70);
+                    d.vx    = std::cos(angle) * speed;
+                    d.vy    = -std::abs(std::sin(angle)) * speed - 40.f;
+                    d.life  = 0.7f + (float)(rand() % 8) * 0.1f;
+                    d.maxLife = d.life;
+                    met.dust.push_back(d);
+                }
+
+                // Check player hit (AABB around impact point)
+                AABB meteorHit = {met.targetX - 16.f, met.landY - 22.f, 32.f, 32.f};
+                AABB playerAABB = m_player.getAABB();
+                if (meteorHit.intersects(playerAABB)) {
+                    loseLife();
+                    // Knockback away from impact
+                    float kx = (playerAABB.x + playerAABB.w * 0.5f > met.targetX) ? 160.f : -160.f;
+                    m_player.vel = {kx, -180.f};
+                }
+
+                // Check meteor plate
+                if (!m_marsMeteorDoorOpen &&
+                    m_marsMeteorPlateIdx >= 0 &&
+                    m_marsMeteorPlateIdx < (int)m_puzzle.plates.size()) {
+                    const AABB& plateArea = m_puzzle.plates[m_marsMeteorPlateIdx].area;
+                    if (meteorHit.intersects(plateArea)) {
+                        m_marsMeteorDoorOpen = true;
+                        m_ui.showNotification("운석이 압력판을 눌렀다! 문이 열렸어!", NotifType::Warning);
+                    }
+                }
+            }
+        } else if (met.landed) {
+            met.dustTimer -= dt;
+            for (auto& d : met.dust) {
+                d.x  += d.vx * dt;
+                d.y  += d.vy * dt;
+                d.vy += 220.f * dt; // gravity on dust
+                d.life -= dt;
+            }
+            met.dust.erase(
+                std::remove_if(met.dust.begin(), met.dust.end(),
+                               [](const MeteorDust& d){ return d.life <= 0.f; }),
+                met.dust.end());
+            if (met.dustTimer <= 0.f && met.dust.empty())
+                met.active = false;
+        }
+    }
+
+    // Remove inactive meteors
+    m_marsMeteorites.erase(
+        std::remove_if(m_marsMeteorites.begin(), m_marsMeteorites.end(),
+                       [](const Meteor& m){ return !m.active; }),
+        m_marsMeteorites.end());
+
+    // Keep meteor door open once triggered
+    if (3 < (int)m_puzzle.doors.size())
+        m_puzzle.doors[3].open = m_marsMeteorDoorOpen;
+
+    // Countdown to next wave
+    m_marsNextMeteor -= dt;
+    if (m_marsNextMeteor <= 0.f) {
+        int count = 3 + (rand() % 3); // 3-5 meteors
+        for (int i = 0; i < count; i++) {
+            Meteor met;
+            met.targetX  = 100.f + (float)(rand() % 950);
+            met.landY    = 575.f;
+            met.x        = met.targetX;
+            met.y        = -50.f;
+            met.warnTimer = 1.5f;
+            met.fallSpeed = (met.landY + 50.f) / 1.5f;
+            met.active   = true;
+            met.landed   = false;
+            met.dustTimer = 0.f;
+            m_marsMeteorites.push_back(met);
+        }
+        m_marsNextMeteor = 5.f + (float)(rand() % 30) / 10.f; // 5-8s
+    }
+}
+
+void Game::updateMercurySolarFlare(float dt) {
+    const float WARN_START  = 27.f;
+    const float FLARE_START = 30.f;
+    const float CYCLE_END   = 38.f;
+    const float BEAM_SPEED  = 120.f;
+    const float BEAM_H      = 28.f;
+
+    m_mercurySolarCycle += dt;
+
+    // Warning phase
+    m_mercurySolarWarning = (m_mercurySolarCycle >= WARN_START &&
+                              m_mercurySolarCycle < FLARE_START);
+
+    // Activate flare
+    if (m_mercurySolarCycle >= FLARE_START && !m_mercurySolarFlareActive) {
+        m_mercurySolarFlareActive = true;
+        m_solarFlareTimer = 0.f;
+        m_solarBeams.clear();
+        // 3 staggered beams starting above screen
+        for (int i = 0; i < 3; i++) {
+            SolarBeam b;
+            b.y         = -BEAM_H - i * 200.f;
+            b.hitPlayer = false;
+            m_solarBeams.push_back(b);
+        }
+        m_ui.showNotification("☀ 태양 플레어 발동!", NotifType::Danger);
+    }
+
+    // Flare active: update beams
+    if (m_mercurySolarFlareActive) {
+        m_solarFlareTimer += dt;
+        m_solarFlareTint = std::min(m_solarFlareTint + dt * 3.f, 1.f);
+
+        float playerScreenY = m_player.pos.y - m_camY;
+        bool anyActive = false;
+        for (auto& b : m_solarBeams) {
+            b.y += BEAM_SPEED * dt;
+            if (b.y < (float)m_screenH + BEAM_H) anyActive = true;
+
+            // Hit check (once per beam, only when deathState=0)
+            if (!b.hitPlayer && m_deathState == 0) {
+                if (playerScreenY + PLAYER_HALF * 2.f > b.y &&
+                    playerScreenY < b.y + BEAM_H) {
+                    b.hitPlayer = true;
+                    loseLife();
+                }
+            }
+        }
+
+        if (!anyActive) {
+            m_mercurySolarFlareActive = false;
+            m_solarBeams.clear();
+        }
+    }
+
+    // Fade tint out when flare is done
+    if (!m_mercurySolarFlareActive) {
+        m_solarFlareTint = std::max(m_solarFlareTint - dt * 1.5f, 0.f);
+    }
+
+    // Reset cycle
+    if (m_mercurySolarCycle >= CYCLE_END) {
+        m_mercurySolarCycle = 0.f;
+        m_mercurySolarWarning = false;
+    }
+}
+
 void Game::loseLife() {
     if (m_deathState != 0) return;
     m_lives--;
+    if (m_lives == 1)
+        m_ui.showNotification("⚠ 목숨 1개 남았어!", NotifType::Danger);
     m_deathFade = 0.f;
     m_deathState = 1;
     const PlanetLayout& L = LAYOUTS[m_currentPlanet];

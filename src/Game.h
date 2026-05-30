@@ -1,11 +1,25 @@
 #pragma once
 #include <SDL2/SDL.h>
 #include <string>
+#include <vector>
 #include "Player.h"
 #include "TileMap.h"
 #include "PuzzleSystem.h"
 #include "UI.h"
 #include "SolarMap.h"
+
+// Mars meteor shower
+struct MeteorDust { float x, y, vx, vy, life, maxLife; };
+struct Meteor {
+    float x, y;
+    float targetX, landY;
+    float warnTimer;   // counts down from 1.5 → 0 = impact
+    float fallSpeed;
+    bool  active;
+    bool  landed;
+    float dustTimer;
+    std::vector<MeteorDust> dust;
+};
 
 enum class Scene {
     Title,
@@ -102,6 +116,21 @@ private:
     float m_mercuryDayCycle = 0.f;
     std::vector<AABB> m_heatCracks;  // death-zone AABBs (Mercury)
 
+    // Mars meteor shower
+    float m_marsNextMeteor     = 6.f;
+    std::vector<Meteor> m_marsMeteorites;
+    bool  m_marsMeteorDoorOpen = false;
+    int   m_marsMeteorPlateIdx = -1;
+
+    // Mercury solar flare
+    float m_mercurySolarCycle       = 0.f;
+    bool  m_mercurySolarWarning     = false;
+    bool  m_mercurySolarFlareActive = false;
+    float m_solarFlareTimer         = 0.f;
+    float m_solarFlareTint          = 0.f;
+    struct SolarBeam { float y; bool hitPlayer; };
+    std::vector<SolarBeam> m_solarBeams;
+
     void handleEvents();
     void update(float dt);
     void render();
@@ -135,6 +164,8 @@ private:
     bool isNearRock() const;
     void checkMarsRockBoundaries();
     void loseLife();
+    void updateMarsMeteorites(float dt);
+    void updateMercurySolarFlare(float dt);
     std::vector<AABB> collectWalls() const;
     std::vector<AABB> collectBaseWalls() const;
 

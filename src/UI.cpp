@@ -45,7 +45,6 @@ bool UI::init(SDL_Renderer* /*r*/, const std::string& fontPath) {
     m_fontBig = TTF_OpenFont(fontPath.c_str(), 28);
     if (!m_font || !m_fontBig) {
         SDL_Log("Font load failed [%s]: %s", fontPath.c_str(), TTF_GetError());
-        // Game continues without text rather than crashing
     }
     return true;
 }
@@ -57,19 +56,26 @@ void UI::shutdown() {
 }
 
 void UI::update(float dt) {
-    for (auto& p : m_popups) {
-        p.life  -= dt;
-        p.y     -= 22.f * dt;
-        p.alpha  = std::max(0.f, std::min(p.life / 2.f * 255.f, 255.f));
+    if (m_hasNotif) {
+        m_curNotif.life -= dt;
+        if (m_curNotif.life <= 0.f)
+            m_hasNotif = false;
     }
-    m_popups.erase(
-        std::remove_if(m_popups.begin(), m_popups.end(),
-                       [](const Popup& p){ return p.life <= 0.f; }),
-        m_popups.end());
+    if (!m_hasNotif && !m_notifQueue.empty()) {
+        m_curNotif = m_notifQueue.front();
+        m_notifQueue.pop();
+        m_hasNotif = true;
+    }
 }
 
-void UI::showPopup(const std::string& msg, float x, float y) {
-    m_popups.push_back({msg, x, y, 2.5f, 255.f});
+void UI::showNotification(const std::string& msg, NotifType type) {
+    if ((int)m_notifQueue.size() >= 3) return;
+    Notification n;
+    n.text    = msg;
+    n.type    = type;
+    n.life    = 2.5f;
+    n.maxLife = 2.5f;
+    m_notifQueue.push(n);
 }
 
 void UI::render(SDL_Renderer* r,
@@ -93,7 +99,7 @@ void UI::render(SDL_Renderer* r,
         renderEdgeGlow(r, screenW, screenH, ac, 0.55f);
     }
 
-    // Wind warning overlay
+    // Wind warning edge glow
     if (windWarning) {
         static float warnPulse = 0.f;
         warnPulse += 0.05f;
@@ -103,25 +109,13 @@ void UI::render(SDL_Renderer* r,
 
     renderHUD(r, planetCollected, planetParts, planetIdx, physics, screenW, screenH);
 
-    // Total parts bottom-left
-    if (m_font) {
-        char buf[64];
-        std::snprintf(buf, sizeof(buf), "총 부품: %d / %d", totalCollected, totalParts);
-        SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
-        SDL_SetRenderDrawColor(r, 0, 0, 0, 130);
-        SDL_FRect bg = {8.f, (float)screenH - 36.f, 200.f, 28.f};
-        SDL_RenderFillRectF(r, &bg);
-        SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
-        renderText(r, m_font, buf, 16.f, (float)screenH - 30.f, {190, 210, 240, 220});
-    }
-
     // Minimap (top-right)
     if (rocks && parts && plates) {
         renderMinimap(r, screenW, screenH, *rocks, *parts, *plates,
                       playerPos, baseEntrPos, mapW, mapH, minimapDisabled);
     }
 
-    // Wind warning text
+    // Wind warning text (top center, Neptune)
     if (windWarning && m_fontBig) {
         SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
         SDL_SetRenderDrawColor(r, 180, 0, 0, 160);
@@ -137,13 +131,10 @@ void UI::render(SDL_Renderer* r,
         renderStellaBubble(r, screenW, screenH, stellaText, stellaAlpha);
     }
 
-    // Popups
-    for (const auto& p : m_popups) {
-        if (!m_font) continue;
-        TTF_Font* f = (m_fontBig && p.life > 1.5f) ? m_fontBig : m_font;
-        SDL_Color col = {255, 230, 100, (Uint8)p.alpha};
-        renderText(r, f, p.text, p.x, p.y, col, true);
-    }
+    // Bottom-center notification queue
+    renderNotification(r, screenW, screenH);
+
+    (void)totalCollected; (void)totalParts;
 }
 
 void UI::renderHUD(SDL_Renderer* r,
@@ -152,15 +143,23 @@ void UI::renderHUD(SDL_Renderer* r,
                    int sw, int sh)
 {
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
-
-    // Top-left panel: planet name + gravity
-    SDL_SetRenderDrawColor(r, 0, 0, 0, 150);
-    SDL_FRect panel = {8.f, 8.f, 240.f, 56.f};
-    SDL_RenderFillRectF(r, &panel);
     const auto& ac = physics.ambientColor;
+
+    // Planet name + gravity panel
+    SDL_SetRenderDrawColor(r, 8, 10, 20, 160);
+    SDL_FRect panel = {8.f, 8.f, 240.f, 48.f};
+    SDL_RenderFillRectF(r, &panel);
     SDL_SetRenderDrawColor(r, ac.r, ac.g, ac.b, 200);
-    SDL_FRect accent = {8.f, 8.f, 4.f, 56.f};
+    SDL_FRect accent = {8.f, 8.f, 4.f, 48.f};
     SDL_RenderFillRectF(r, &accent);
+
+    // Parts panel (below hearts area — hearts drawn in Game.cpp at y=58-88)
+    SDL_SetRenderDrawColor(r, 8, 10, 20, 150);
+    SDL_FRect partsPanel = {8.f, 90.f, 210.f, 28.f};
+    SDL_RenderFillRectF(r, &partsPanel);
+    SDL_SetRenderDrawColor(r, ac.r, ac.g, ac.b, 140);
+    SDL_FRect partsAccent = {8.f, 90.f, 4.f, 28.f};
+    SDL_RenderFillRectF(r, &partsAccent);
 
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
 
@@ -168,24 +167,30 @@ void UI::renderHUD(SDL_Renderer* r,
         const char* knames[8] = {"수성","금성","지구","화성","목성","토성","천왕성","해왕성"};
         char buf[64];
         std::snprintf(buf, sizeof(buf), "%s (%s)", knames[planetIdx], physics.name);
-        renderText(r, m_font, buf, 18.f, 14.f, {220, 225, 240, 255});
+        renderText(r, m_font, buf, 18.f, 13.f, {220, 225, 240, 255});
         std::snprintf(buf, sizeof(buf), "중력: %.1f m/s²", physics.gravity);
-        renderText(r, m_font, buf, 18.f, 36.f, {170, 190, 215, 220});
+        renderText(r, m_font, buf, 18.f, 33.f, {170, 190, 215, 220});
     }
 
-    // Planet part icons (below name panel)
+    // Part icons in parts panel
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
     for (int i = 0; i < planetParts; i++) {
         float ix = 18.f + i * 22.f;
-        SDL_FRect icon = {ix, 70.f, 14.f, 14.f};
-        if (i < planetDone) {
+        SDL_FRect icon = {ix, 99.f, 14.f, 14.f};
+        if (i < planetDone)
             SDL_SetRenderDrawColor(r, 255, 200, 50, 255);
-        } else {
+        else
             SDL_SetRenderDrawColor(r, 55, 55, 60, 180);
-        }
         SDL_RenderFillRectF(r, &icon);
         SDL_SetRenderDrawColor(r, 180, 160, 80, 120);
         SDL_RenderDrawRectF(r, &icon);
+    }
+    if (m_font && planetParts > 0) {
+        char buf[16];
+        std::snprintf(buf, sizeof(buf), "%d/%d", planetDone, planetParts);
+        renderText(r, m_font, buf,
+                   20.f + planetParts * 22.f, 99.f,
+                   {160, 170, 190, 200});
     }
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
 
@@ -229,7 +234,6 @@ void UI::renderMinimap(SDL_Renderer* r, int sw, int sh,
     float scaleX = (mapW > 0) ? mmW / mapW : 1.f;
     float scaleY = (mapH > 0) ? mmH / mapH : 1.f;
 
-    // Pressure plates: green
     SDL_SetRenderDrawColor(r, 80, 220, 80, 200);
     for (const auto& p : plates) {
         float px = mmX + (p.area.x + p.area.w * 0.5f) * scaleX;
@@ -238,7 +242,6 @@ void UI::renderMinimap(SDL_Renderer* r, int sw, int sh,
         SDL_RenderFillRectF(r, &dot);
     }
 
-    // Rocks: brown
     SDL_SetRenderDrawColor(r, 160, 120, 60, 200);
     for (const auto& rock : rocks) {
         if (!rock.active) continue;
@@ -248,7 +251,6 @@ void UI::renderMinimap(SDL_Renderer* r, int sw, int sh,
         SDL_RenderFillRectF(r, &dot);
     }
 
-    // Parts: yellow
     SDL_SetRenderDrawColor(r, 255, 220, 50, 240);
     for (const auto& pt : parts) {
         if (pt.collected) continue;
@@ -258,7 +260,6 @@ void UI::renderMinimap(SDL_Renderer* r, int sw, int sh,
         SDL_RenderFillRectF(r, &dot);
     }
 
-    // Base entrance: blue
     {
         float px = mmX + baseEntrPos.x * scaleX;
         float py = mmY + baseEntrPos.y * scaleY;
@@ -266,8 +267,6 @@ void UI::renderMinimap(SDL_Renderer* r, int sw, int sh,
         SDL_FRect dot = {px - 3.f, py - 3.f, 6.f, 6.f};
         SDL_RenderFillRectF(r, &dot);
     }
-
-    // Player: white
     {
         float px = mmX + playerPos.x * scaleX;
         float py = mmY + playerPos.y * scaleY;
@@ -289,17 +288,13 @@ void UI::renderEdgeGlow(SDL_Renderer* r, int sw, int sh, SDL_Color col, float al
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
     Uint8 a = (Uint8)(255 * alpha);
     const float thickness = 24.f;
-    // top
     SDL_SetRenderDrawColor(r, col.r, col.g, col.b, a);
     SDL_FRect top = {0, 0, (float)sw, thickness};
     SDL_RenderFillRectF(r, &top);
-    // bottom
     SDL_FRect bot = {0, (float)sh - thickness, (float)sw, thickness};
     SDL_RenderFillRectF(r, &bot);
-    // left
     SDL_FRect lft = {0, 0, thickness, (float)sh};
     SDL_RenderFillRectF(r, &lft);
-    // right
     SDL_FRect rgt = {(float)sw - thickness, 0, thickness, (float)sh};
     SDL_RenderFillRectF(r, &rgt);
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
@@ -323,7 +318,6 @@ void UI::renderStellaBubble(SDL_Renderer* r, int sw, int sh,
     SDL_RenderFillRectF(r, &bg);
     SDL_SetRenderDrawColor(r, 90, 160, 255, (Uint8)(180 * alpha));
     SDL_RenderDrawRectF(r, &bg);
-    // Tail (pointing left toward astronaut)
     float ty = by + bh * 0.5f;
     SDL_SetRenderDrawColor(r, 12, 16, 38, (Uint8)(210 * alpha));
     for (int i = 1; i <= 12; i++) {
@@ -339,8 +333,47 @@ void UI::renderStellaBubble(SDL_Renderer* r, int sw, int sh,
     renderText(r, m_font, text, bx + bw * 0.5f, by + bh * 0.5f - 8.f, tc, true);
 }
 
+void UI::renderNotification(SDL_Renderer* r, int sw, int sh) {
+    if (!m_hasNotif || !m_font) return;
+
+    float t  = m_curNotif.life;
+    float mx = m_curNotif.maxLife;
+    float fade;
+    if      (t < 0.4f)       fade = t / 0.4f;
+    else if (t > mx - 0.25f) fade = (mx - t) / 0.25f;
+    else                     fade = 1.f;
+    fade = std::max(0.f, std::min(1.f, fade));
+    Uint8 a = (Uint8)(255.f * fade);
+    if (a == 0) return;
+
+    SDL_Color barCol;
+    switch (m_curNotif.type) {
+        case NotifType::Warning: barCol = {255, 140, 40, a}; break;
+        case NotifType::Danger:  barCol = {220, 50,  50, a}; break;
+        default:                 barCol = {60,  120, 255, a}; break;
+    }
+
+    const float nw = 500.f, nh = 44.f;
+    float nx = ((float)sw - nw) * 0.5f;
+    float ny = (float)sh - nh - 8.f;
+
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(r, 8, 10, 20, (Uint8)(200.f * fade));
+    SDL_FRect bg = {nx, ny, nw, nh};
+    SDL_RenderFillRectF(r, &bg);
+    SDL_SetRenderDrawColor(r, barCol.r, barCol.g, barCol.b, a);
+    SDL_FRect bar = {nx, ny, 5.f, nh};
+    SDL_RenderFillRectF(r, &bar);
+    SDL_SetRenderDrawColor(r, barCol.r, barCol.g, barCol.b, (Uint8)(80.f * fade));
+    SDL_RenderDrawRectF(r, &bg);
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
+
+    SDL_Color tc = {220, 230, 255, a};
+    renderText(r, m_font, m_curNotif.text,
+               nx + nw * 0.5f + 2.f, ny + nh * 0.5f - 8.f, tc, true);
+}
+
 void UI::renderTitleScreen(SDL_Renderer* r, int sw, int sh, float timer) {
-    // Title shadow + main text
     if (m_fontBig) {
         renderText(r, m_fontBig, "STELLA TRAIL",
                    sw/2.f + 3.f, sh/2.f - 88.f, {0, 0, 0, 130}, true);
@@ -348,12 +381,10 @@ void UI::renderTitleScreen(SDL_Renderer* r, int sw, int sh, float timer) {
                    sw/2.f, sh/2.f - 91.f, {255, 235, 130, 255}, true);
     }
     if (m_font) {
-        // Decorative separator line
         float p = (std::sin(timer * 2.6f) + 1.f) * 0.5f;
         SDL_Color ec = {195, 215, 255, (Uint8)(110 + 140 * p)};
         renderText(r, m_font, "—  —  —  PRESS ENTER  —  —  —",
                    sw/2.f, sh/2.f - 44.f, ec, true);
-        // Controls hint (bottom, subtle)
         renderText(r, m_font, "WASD : Move    Push rocks onto plates    ESC : Quit",
                    sw/2.f, sh - 30.f, {72, 88, 115, 155}, true);
     }

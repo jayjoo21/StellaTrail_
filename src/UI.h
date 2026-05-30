@@ -3,14 +3,17 @@
 #include <SDL2/SDL_ttf.h>
 #include <string>
 #include <vector>
+#include <queue>
 #include "Physics.h"
 #include "PuzzleSystem.h"
 
-struct Popup {
+enum class NotifType { Normal, Warning, Danger };
+
+struct Notification {
     std::string text;
-    float x, y;
-    float life  = 2.f;
-    float alpha = 255.f;
+    NotifType   type    = NotifType::Normal;
+    float       life    = 2.5f;
+    float       maxLife = 2.5f;
 };
 
 class UI {
@@ -24,18 +27,14 @@ public:
                 int screenW, int screenH,
                 int planetCollected, int planetParts,
                 int planetIdx, const PlanetPhysics& physics,
-                // minimap data
                 const std::vector<RigidBody>* rocks,
                 const std::vector<Part>* parts,
                 const std::vector<PressurePlate>* plates,
                 Vec2 playerPos, Vec2 baseEntrPos,
                 int mapW, int mapH,
                 bool minimapDisabled,
-                // gimmick edge glow
                 bool gimmickActive,
-                // wind warning
                 bool windWarning,
-                // stella speech bubble
                 const std::string& stellaText, float stellaAlpha);
 
     void renderTitleScreen(SDL_Renderer* r, int sw, int sh, float timer);
@@ -48,7 +47,7 @@ public:
                               const PlanetPhysics& p, float timer);
     void renderEnding(SDL_Renderer* r, int sw, int sh, float timer);
 
-    void showPopup(const std::string& msg, float x, float y);
+    void showNotification(const std::string& msg, NotifType type = NotifType::Normal);
     void setShipStage(int s) { m_shipStage = s; }
 
     TTF_Font* getFont()    const { return m_font; }
@@ -61,8 +60,11 @@ public:
 private:
     TTF_Font* m_font    = nullptr;
     TTF_Font* m_fontBig = nullptr;
-    int  m_shipStage    = 0;
-    std::vector<Popup> m_popups;
+    int       m_shipStage = 0;
+
+    std::queue<Notification> m_notifQueue;
+    bool         m_hasNotif = false;
+    Notification m_curNotif = {};
 
     void renderHUD(SDL_Renderer* r,
                    int planetDone, int planetParts,
@@ -78,5 +80,5 @@ private:
                         SDL_Color col, float alpha);
     void renderStellaBubble(SDL_Renderer* r, int sw, int sh,
                             const std::string& text, float alpha);
-    void renderWindWarning(SDL_Renderer* r, int sw, int sh, float timer);
+    void renderNotification(SDL_Renderer* r, int sw, int sh);
 };
