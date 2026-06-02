@@ -1887,21 +1887,43 @@ void Game::renderPlaying() {
         }
         if (m_mercurySolarFlareActive && !m_solarBeams.empty()) {
             SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
-            const float BEAM_H = 28.f;
+            const float BEAM_H     = 28.f;
+            const float BEAM_SPEED = 80.f;
+            const float WARN_AHEAD = 1.0f;   // show dashes 1 second ahead
+
             for (const auto& b : m_solarBeams) {
-                if (b.y > (float)m_screenH + BEAM_H) continue;
-                if (b.y + BEAM_H < -BEAM_H) continue;
+                // --- 1-second warning dashed lines ---
+                // Only shown while the beam is still above screen
+                float warnY = b.y + BEAM_SPEED * WARN_AHEAD;
+                bool beamAbove  = (b.y + BEAM_H < 0.f);
+                bool warnOnScreen = (warnY + BEAM_H >= 0.f) && (warnY < (float)m_screenH);
+                if (beamAbove && warnOnScreen) {
+                    // Top edge dash
+                    SDL_SetRenderDrawColor(m_renderer, 255, 220, 50, 190);
+                    for (float x = 0.f; x < (float)m_screenW; x += 24.f) {
+                        float ex = std::min(x + 14.f, (float)m_screenW);
+                        SDL_RenderDrawLineF(m_renderer, x, warnY,          ex, warnY);
+                        SDL_RenderDrawLineF(m_renderer, x, warnY + BEAM_H, ex, warnY + BEAM_H);
+                    }
+                    // Faint interior fill showing future beam area
+                    SDL_SetRenderDrawColor(m_renderer, 255, 200, 40, 28);
+                    SDL_FRect fillRf = {0.f, warnY, (float)m_screenW, BEAM_H};
+                    SDL_RenderFillRectF(m_renderer, &fillRf);
+                }
+
+                // --- Actual beam ---
+                if (b.y + BEAM_H <= 0.f || b.y >= (float)m_screenH) continue;
                 // Outer glow
                 SDL_SetRenderDrawColor(m_renderer, 255, 160, 40, 55);
                 SDL_FRect glowRf = {0.f, b.y - 8.f, (float)m_screenW, BEAM_H + 16.f};
                 SDL_RenderFillRectF(m_renderer, &glowRf);
-                // Main beam
-                SDL_SetRenderDrawColor(m_renderer, 255, 180, 50, 210);
+                // Main beam body
+                SDL_SetRenderDrawColor(m_renderer, 255, 180, 50, 215);
                 SDL_FRect beamRf = {0.f, b.y, (float)m_screenW, BEAM_H};
                 SDL_RenderFillRectF(m_renderer, &beamRf);
                 // Bright center highlight
-                SDL_SetRenderDrawColor(m_renderer, 255, 240, 160, 240);
-                SDL_FRect ctrRf = {0.f, b.y + BEAM_H*0.35f, (float)m_screenW, BEAM_H*0.3f};
+                SDL_SetRenderDrawColor(m_renderer, 255, 240, 160, 245);
+                SDL_FRect ctrRf = {0.f, b.y + BEAM_H * 0.35f, (float)m_screenW, BEAM_H * 0.3f};
                 SDL_RenderFillRectF(m_renderer, &ctrRf);
             }
             SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
@@ -2808,32 +2830,41 @@ void Game::updateMarsMeteorites(float dt) {
 void Game::updateMercurySolarFlare(float dt) {
     const float WARN_START  = 27.f;
     const float FLARE_START = 30.f;
-    const float CYCLE_END   = 38.f;
-    const float BEAM_SPEED  = 120.f;
+    const float CYCLE_END   = 40.f;
+    const float BEAM_SPEED  = 80.f;    // slower — more dodgeable
     const float BEAM_H      = 28.f;
+    const float MIN_GAP     = 100.f;   // minimum gap between beams (3+ tiles = 96px)
+    const float MAX_GAP     = 180.f;
 
     m_mercurySolarCycle += dt;
 
-    // Warning phase
     m_mercurySolarWarning = (m_mercurySolarCycle >= WARN_START &&
                               m_mercurySolarCycle < FLARE_START);
 
-    // Activate flare
+    // Activate flare: 2 beams with randomized gap each time
     if (m_mercurySolarCycle >= FLARE_START && !m_mercurySolarFlareActive) {
         m_mercurySolarFlareActive = true;
         m_solarFlareTimer = 0.f;
         m_solarBeams.clear();
-        // 3 staggered beams starting above screen
-        for (int i = 0; i < 3; i++) {
-            SolarBeam b;
-            b.y         = -BEAM_H - i * 200.f;
-            b.hitPlayer = false;
-            m_solarBeams.push_back(b);
-        }
+
+        // Randomize gap; guarantee minimum 3-tile clearance
+        float gap = MIN_GAP + (float)(rand() % (int)(MAX_GAP - MIN_GAP + 1));
+
+        // beam[0]: lower beam — enters screen first (starts just above top)
+        SolarBeam b0;
+        b0.y = -BEAM_H;
+        b0.hitPlayer = false;
+        // beam[1]: upper beam — enters screen second (further above = larger gap)
+        SolarBeam b1;
+        b1.y = -(2.f * BEAM_H + gap);
+        b1.hitPlayer = false;
+        m_solarBeams.push_back(b0);
+        m_solarBeams.push_back(b1);
+
         m_ui.showNotification("☀ 태양 플레어 발동!", NotifType::Danger);
     }
 
-    // Flare active: update beams
+    // Flare active: move beams downward
     if (m_mercurySolarFlareActive) {
         m_solarFlareTimer += dt;
         m_solarFlareTint = std::min(m_solarFlareTint + dt * 3.f, 1.f);
@@ -2844,7 +2875,6 @@ void Game::updateMercurySolarFlare(float dt) {
             b.y += BEAM_SPEED * dt;
             if (b.y < (float)m_screenH + BEAM_H) anyActive = true;
 
-            // Hit check (once per beam, only when deathState=0)
             if (!b.hitPlayer && m_deathState == 0) {
                 if (playerScreenY + PLAYER_HALF * 2.f > b.y &&
                     playerScreenY < b.y + BEAM_H) {
@@ -2860,12 +2890,9 @@ void Game::updateMercurySolarFlare(float dt) {
         }
     }
 
-    // Fade tint out when flare is done
-    if (!m_mercurySolarFlareActive) {
+    if (!m_mercurySolarFlareActive)
         m_solarFlareTint = std::max(m_solarFlareTint - dt * 1.5f, 0.f);
-    }
 
-    // Reset cycle
     if (m_mercurySolarCycle >= CYCLE_END) {
         m_mercurySolarCycle = 0.f;
         m_mercurySolarWarning = false;
