@@ -131,6 +131,17 @@ private:
     struct SolarBeam { float y; bool hitPlayer; };
     std::vector<SolarBeam> m_solarBeams;
 
+    // Jupiter wind + vortex
+    float m_jupiterWindCycle   = 0.f;
+    int   m_jupiterWindDir     = 0;    // 0=E 1=W 2=S 3=N
+    bool  m_jupiterWindWarning = false;
+    bool  m_jupiterWindActive  = true;
+    bool  m_jupiterPrevWarning = false;
+    float m_jupiterVortexTimer = 0.f;
+    bool  m_jupiterVortexWarn  = false;
+    bool  m_jupiterVortexDanger= false;
+    int   m_jupiterHints       = 0;    // bitmask
+
     // Developer mode
     bool m_devMenuOpen = false;
 
@@ -169,6 +180,7 @@ private:
     void loseLife();
     void updateMarsMeteorites(float dt);
     void updateMercurySolarFlare(float dt);
+    void updateJupiterGimmick(float dt);
     void renderDevMenu();
     void handleDevMenuClick(int mx, int my);
     std::vector<AABB> collectWalls() const;

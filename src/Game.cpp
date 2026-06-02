@@ -302,6 +302,54 @@ void Game::loadPlanet(int idx) {
         return;
     }
 
+    // Jupiter (4): radial vortex + dual-plate + wind redesign
+    if (idx == 4) {
+        // 4 heavy rocks — use wind to blow them onto pressure plates
+        m_puzzle.addRock(140.f,  560.f, 15.f);   // Rock A: far west  → East wind → Plate A
+        m_puzzle.addRock(990.f,  560.f, 15.f);   // Rock B: far east  → West wind → Plate B
+        m_puzzle.addRock(280.f,  400.f, 15.f);   // Rock C: mid-west (utility)
+        m_puzzle.addRock(870.f,  400.f, 15.f);   // Rock D: mid-east (utility)
+
+        // Dual-plate: BOTH must be pressed to open canyon door
+        m_puzzle.addPressurePlate(290.f, 568.f, 80.f, 20.f, 0);  // Plate A (west)
+        m_puzzle.addPressurePlate(792.f, 568.f, 80.f, 20.f, 0);  // Plate B (east)
+        m_puzzle.addDoor(576.f, 256.f, 64.f, 64.f);               // Canyon passage
+
+        // Parts in upper zone (accessible after door opens)
+        m_puzzle.addPart(200.f, 128.f);
+        m_puzzle.addPart(900.f, 128.f);
+
+        m_puzzle.setWarpGate(1096.f, 480.f);
+        m_puzzle.setBaseEntrance(1096.f, 480.f);
+
+        // Energy drinks near the vortex (dangerous to collect)
+        m_puzzle.addEnergyDrink(576.f, 340.f);   // Above vortex center — warning zone
+        m_puzzle.addEnergyDrink(440.f, 450.f);   // Left vortex edge
+        m_puzzle.addEnergyDrink(712.f, 450.f);   // Right vortex edge
+
+        // Reset Jupiter gimmick state
+        m_jupiterWindCycle   = 0.f;
+        m_jupiterWindDir     = 0;       // start: East
+        m_jupiterWindActive  = true;
+        m_jupiterWindWarning = false;
+        m_jupiterPrevWarning = false;
+        m_jupiterVortexTimer = 0.f;
+        m_jupiterVortexWarn  = false;
+        m_jupiterVortexDanger = false;
+        m_jupiterHints       = 0;
+
+        m_player.pos = {80.f, 544.f};
+        m_camX = m_camY = 0.f;
+
+        m_stellaText  = "중력이 너무 강해... 움직이기 힘들어.";
+        m_stellaTimer = 4.f;
+
+        applyGimmickToPlayer();
+        int stg = std::min((m_totalPartsFound * 3) / TOTAL_PARTS, 3);
+        m_ui.setShipStage(stg);
+        return;
+    }
+
     const PlanetLayout& L = LAYOUTS[idx];
 
     float rockMass = (idx == 4) ? 15.f : 5.f;
@@ -925,6 +973,10 @@ void Game::updateGimmicks(float dt) {
     if (gimmick == PlanetGimmick::SideDrift) {
         m_puzzle.rockExternalForce = {-6.f, 0.f};  // leftward drift for rocks
     }
+
+    if (gimmick == PlanetGimmick::HeavyGrav) {
+        updateJupiterGimmick(dt);
+    }
 }
 
 void Game::handlePlayerRockInteraction() {
@@ -1328,8 +1380,40 @@ void Game::renderIntro() {
                             curPhysics(), m_currentPlanet, (Uint8)(255*alpha));
 }
 
+// Draw arrow showing wind direction (file-static helper)
+static void drawWindArrow(SDL_Renderer* r,
+                          float x, float y, float dirX, float dirY,
+                          float sz, Uint8 a) {
+    SDL_SetRenderDrawColor(r, 255, 200, 50, a);
+    float ex = x + dirX * sz, ey = y + dirY * sz;
+    SDL_RenderDrawLineF(r, x, y, ex, ey);
+    float px = -dirY * sz * 0.35f, py = dirX * sz * 0.35f;
+    SDL_RenderDrawLineF(r, ex, ey, ex - dirX*sz*0.4f + px, ey - dirY*sz*0.4f + py);
+    SDL_RenderDrawLineF(r, ex, ey, ex - dirX*sz*0.4f - px, ey - dirY*sz*0.4f - py);
+}
+
 void Game::renderPlaying() {
     m_map.render(m_renderer, m_camX, m_camY);
+
+    // Jupiter: orange/brown atmospheric band overlay
+    if (m_currentPlanet == 4) {
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
+        struct Band { Uint8 r, g, b, a; };
+        static const Band BANDS[] = {
+            {190, 100, 45, 22}, {225, 138, 65, 18}, {255, 168, 85, 14},
+            {205, 108, 55, 20}, {245, 150, 78, 16}, {175, 88,  38, 24},
+            {235, 125, 60, 18}, {200, 105, 50, 20}, {250, 155, 80, 14},
+        };
+        const int NB = 9;
+        float bh = (float)m_screenH / NB;
+        for (int i = 0; i < NB; i++) {
+            float by = (float)i * bh;
+            SDL_SetRenderDrawColor(m_renderer, BANDS[i].r, BANDS[i].g, BANDS[i].b, BANDS[i].a);
+            SDL_FRect band = {0.f, by, (float)m_screenW, bh + 1.f};
+            SDL_RenderFillRectF(m_renderer, &band);
+        }
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
+    }
 
     // Mercury: day/night cycle overlay
     if (m_currentPlanet == 0) {
@@ -1497,6 +1581,64 @@ void Game::renderPlaying() {
             SDL_RenderFillRectF(m_renderer, &top);
             SDL_RenderFillRectF(m_renderer, &bot);
         }
+
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
+    }
+
+    // Jupiter: central vortex rendering
+    if (m_currentPlanet == 4) {
+        static const float VCX = 576.f, VCY = 455.f;
+        static const float DEATH_R = 65.f, WARN_R = 180.f;
+        float vcx = VCX - m_camX, vcy = VCY - m_camY;
+        float ringPulse = (std::sin(m_titleTimer * 5.f) + 1.f) * 0.5f;
+
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
+
+        // Warning ring (flashing red outline)
+        for (int ring = 0; ring < 4; ring++) {
+            float rrad = WARN_R - ring * 6.f;
+            Uint8 ra = (Uint8)(50 + 60 * ringPulse);
+            SDL_SetRenderDrawColor(m_renderer, 220, 50, 15, ra);
+            for (float a = 0.f; a < 6.28318f; a += 0.08f) {
+                float px = vcx + rrad * std::cos(a);
+                float py = vcy + rrad * std::sin(a);
+                SDL_FRect dot = {px - 1.f, py - 1.f, 3.f, 3.f};
+                SDL_RenderFillRectF(m_renderer, &dot);
+            }
+        }
+
+        // Spiral vortex particles (orange → yellow)
+        for (int i = 0; i < 28; i++) {
+            float frac = (float)i / 28.f;
+            float angle = m_jupiterVortexTimer * 2.2f + frac * 6.28318f * 2.f;
+            float rad   = DEATH_R + (WARN_R - DEATH_R) * frac;
+            float px    = vcx + rad * std::cos(angle);
+            float py    = vcy + rad * std::sin(angle);
+            Uint8 pa    = (Uint8)(70 + 150 * (1.f - frac));
+            Uint8 pr    = 255;
+            Uint8 pg    = (Uint8)(100 + 120 * (1.f - frac));
+            SDL_SetRenderDrawColor(m_renderer, pr, pg, 15, pa);
+            float sz = 3.f + 4.f * (1.f - frac);
+            SDL_FRect dot = {px - sz*0.5f, py - sz*0.5f, sz, sz};
+            SDL_RenderFillRectF(m_renderer, &dot);
+        }
+
+        // Inner glow around death zone
+        SDL_SetRenderDrawColor(m_renderer, 255, 80, 20, (Uint8)(80 + 60 * ringPulse));
+        for (float a = 0.f; a < 6.28318f; a += 0.12f) {
+            float px = vcx + (DEATH_R + 4.f) * std::cos(a);
+            float py = vcy + (DEATH_R + 4.f) * std::sin(a);
+            SDL_FRect d = {px - 2.f, py - 2.f, 5.f, 5.f};
+            SDL_RenderFillRectF(m_renderer, &d);
+        }
+
+        // Death zone core (dark swirling black)
+        SDL_SetRenderDrawColor(m_renderer, 0, 0, 0, 220);
+        fillCircle(m_renderer, vcx, vcy, DEATH_R);
+        SDL_SetRenderDrawColor(m_renderer, 140, 20, 5, (Uint8)(100 + 60 * ringPulse));
+        fillCircle(m_renderer, vcx, vcy, DEATH_R * 0.6f);
+        SDL_SetRenderDrawColor(m_renderer, 0, 0, 0, 255);
+        fillCircle(m_renderer, vcx, vcy, DEATH_R * 0.25f);
 
         SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
     }
@@ -1863,6 +2005,77 @@ void Game::renderPlaying() {
         } else if (isNearRock()) {
             SDL_Color hc = {200, 240, 100, 210};
             m_ui.renderText(m_renderer, m_ui.getFont(), "E: 잡기", hx, hy, hc, true);
+        }
+    }
+
+    // Jupiter: wind direction arrows + vortex warning text (screen overlay)
+    if (m_currentPlanet == 4) {
+        const float SW = (float)m_screenW, SH = (float)m_screenH;
+
+        // Vortex warning text (top-center when in danger zone)
+        if (m_jupiterVortexWarn && m_ui.getFont()) {
+            float pulse = 0.5f + 0.5f * std::sin(m_titleTimer * 9.f);
+            SDL_Color wc = {255, 80, 30, (Uint8)(220 * pulse)};
+            m_ui.renderText(m_renderer, m_ui.getFont(),
+                            "소용돌이에 너무 가까워! 반대 방향으로 빠져나와!",
+                            SW * 0.5f, 80.f, wc, true);
+        }
+
+        // Wind arrows on screen edges
+        bool showArrows = m_jupiterWindActive || m_jupiterWindWarning;
+        if (showArrows) {
+            // During warning: show arrows for NEXT direction; active: current direction
+            int arDir = m_jupiterWindWarning ? (m_jupiterWindDir + 1) % 4 : m_jupiterWindDir;
+            float warnMult = m_jupiterWindWarning
+                ? (0.5f + 0.5f * std::sin(m_titleTimer * 7.f))
+                : 1.f;
+            Uint8 arrA = (Uint8)(200 * warnMult);
+
+            SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
+            // Draw 5 arrows evenly spaced on the appropriate edge
+            for (int ai = 0; ai < 5; ai++) {
+                float t = (ai + 0.5f) / 5.f;
+                switch (arDir) {
+                    case 0: // East: arrows on left edge pointing right
+                        drawWindArrow(m_renderer, 30.f, SH*t, 1.f, 0.f, 32.f, arrA);
+                        break;
+                    case 1: // West: arrows on right edge pointing left
+                        drawWindArrow(m_renderer, SW-30.f, SH*t, -1.f, 0.f, 32.f, arrA);
+                        break;
+                    case 2: // South: arrows on top edge pointing down
+                        drawWindArrow(m_renderer, SW*t, 30.f, 0.f, 1.f, 32.f, arrA);
+                        break;
+                    case 3: // North: arrows on bottom edge pointing up
+                        drawWindArrow(m_renderer, SW*t, SH-30.f, 0.f, -1.f, 32.f, arrA);
+                        break;
+                }
+            }
+
+            // Wind-active edge shimmer (opposite edge from arrows)
+            if (m_jupiterWindActive) {
+                float shim = (std::sin(m_titleTimer * 14.f) + 1.f) * 0.5f;
+                Uint8 shimA = (Uint8)(30 + 30 * shim);
+                SDL_SetRenderDrawColor(m_renderer, 255, 200, 50, shimA);
+                const float THICK = 8.f;
+                switch (m_jupiterWindDir) {
+                    case 0: { SDL_FRect r2 = {SW-THICK, 0.f, THICK, SH};   SDL_RenderFillRectF(m_renderer, &r2); break; }
+                    case 1: { SDL_FRect r2 = {0.f,     0.f, THICK, SH};   SDL_RenderFillRectF(m_renderer, &r2); break; }
+                    case 2: { SDL_FRect r2 = {0.f, SH-THICK, SW,  THICK}; SDL_RenderFillRectF(m_renderer, &r2); break; }
+                    case 3: { SDL_FRect r2 = {0.f,     0.f,  SW,  THICK}; SDL_RenderFillRectF(m_renderer, &r2); break; }
+                }
+            }
+            SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
+        }
+
+        // Wind direction label (bottom-right area)
+        if (m_ui.getFont()) {
+            static const char* WIND_LABEL[4] = {"→ 동풍","← 서풍","↓ 남풍","↑ 북풍"};
+            const char* label = m_jupiterWindWarning
+                ? "바람 전환 예고!" : WIND_LABEL[m_jupiterWindDir];
+            SDL_Color lc = m_jupiterWindWarning
+                ? SDL_Color{255, 180, 40, 220} : SDL_Color{220, 180, 80, 190};
+            m_ui.renderText(m_renderer, m_ui.getFont(), label,
+                            SW - 70.f, SH - 52.f, lc, true);
         }
     }
 
@@ -3010,6 +3223,90 @@ void Game::updateMarsMeteorites(float dt) {
             m_marsMeteorites.push_back(met);
         }
         m_marsNextMeteor = 5.f + (float)(rand() % 30) / 10.f; // 5-8s
+    }
+}
+
+void Game::updateJupiterGimmick(float dt) {
+    static const float VORTEX_CX = 576.f, VORTEX_CY = 455.f;
+    static const float DEATH_R   = 65.f,  WARN_R    = 180.f;
+    static const float WIND_PERIOD= 20.f, WARN_BEFORE= 3.f;
+    static const float WIND_FORCE = 55.f;
+
+    m_jupiterVortexTimer += dt;
+
+    // Wind cycle: 17s active → 3s warning (next direction) → switch
+    m_jupiterWindCycle += dt;
+    if (m_jupiterWindCycle >= WIND_PERIOD) {
+        m_jupiterWindCycle -= WIND_PERIOD;
+        m_jupiterWindDir = (m_jupiterWindDir + 1) % 4;
+    }
+    float timeLeft = WIND_PERIOD - m_jupiterWindCycle;
+    m_jupiterWindWarning = (timeLeft <= WARN_BEFORE);
+    m_jupiterWindActive  = !m_jupiterWindWarning;
+
+    // Warning notification: once per transition
+    if (m_jupiterWindWarning && !m_jupiterPrevWarning) {
+        static const char* COMING[4] = {"동풍","서풍","남풍","북풍"};
+        int nextDir = (m_jupiterWindDir + 1) % 4;
+        char buf[48];
+        std::snprintf(buf, sizeof(buf), "바람이 바뀐다! %s 예고!", COMING[nextDir]);
+        m_ui.showNotification(buf, NotifType::Warning);
+        if (m_stellaTimer <= 0.f) {
+            m_stellaText  = "바람이 불어온다! 벽에 붙어!";
+            m_stellaTimer = 2.5f;
+        }
+    }
+    m_jupiterPrevWarning = m_jupiterWindWarning;
+
+    // Wind force
+    Vec2 windForce = {};
+    if (m_jupiterWindActive) {
+        switch (m_jupiterWindDir) {
+            case 0: windForce = {WIND_FORCE,  0.f};       break; // East
+            case 1: windForce = {-WIND_FORCE, 0.f};       break; // West
+            case 2: windForce = {0.f,  WIND_FORCE};       break; // South
+            case 3: windForce = {0.f, -WIND_FORCE};       break; // North
+        }
+    }
+
+    // Vortex pull toward center
+    float dx = m_player.pos.x - VORTEX_CX;
+    float dy = m_player.pos.y - VORTEX_CY;
+    float dist = std::sqrt(dx * dx + dy * dy);
+
+    m_jupiterVortexWarn   = false;
+    m_jupiterVortexDanger = false;
+
+    if (dist < 0.1f) dist = 0.1f;  // avoid divide-by-zero
+
+    if (dist < DEATH_R) {
+        m_jupiterVortexDanger = true;
+        if (m_deathState == 0) loseLife();
+    } else if (dist < WARN_R) {
+        m_jupiterVortexWarn = true;
+        float t = 1.f - (dist - DEATH_R) / (WARN_R - DEATH_R);  // 0=edge, 1=death
+        float pullStr = t * t * 95.f;
+        windForce.x += (-dx / dist) * pullStr;
+        windForce.y += (-dy / dist) * pullStr;
+
+        // First-time vortex hint
+        if (!(m_jupiterHints & 1)) {
+            m_jupiterHints |= 1;
+            m_ui.showNotification("소용돌이에 너무 가까워! 반대 방향으로 빠져나와!", NotifType::Danger);
+        }
+    }
+
+    m_player.externalVel       = windForce;
+    m_puzzle.rockExternalForce = {windForce.x * 2.5f, windForce.y * 2.5f};
+
+    // Delayed entry hints
+    if (!(m_jupiterHints & 2) && m_jupiterVortexTimer > 5.f) {
+        m_jupiterHints |= 2;
+        m_ui.showNotification("바위가 엄청 무거워. 바람을 이용해 압력판으로 날려봐!", NotifType::Normal);
+    }
+    if (!(m_jupiterHints & 4) && m_jupiterVortexTimer > 12.f) {
+        m_jupiterHints |= 4;
+        m_ui.showNotification("압력판 2개를 동시에 눌러야 문이 열려!", NotifType::Normal);
     }
 }
 
