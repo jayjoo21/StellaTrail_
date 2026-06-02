@@ -8,6 +8,21 @@
 #include "UI.h"
 #include "SolarMap.h"
 
+// Venus toxic clouds
+struct ToxicCloud {
+    Vec2  startPos, endPos, pos;
+    float t       = 0.f;
+    float speed   = 0.22f;  // t-units per second
+    bool  forward = true;
+    float stunTimer = 0.f;
+    float wobble  = 0.f;
+    float radius  = 22.f;
+    bool  stunShown = false;
+    AABB getAABB() const {
+        return {pos.x - radius, pos.y - radius, radius * 2.f, radius * 2.f};
+    }
+};
+
 // Mars meteor shower
 struct MeteorDust { float x, y, vx, vy, life, maxLife; };
 struct Meteor {
@@ -131,6 +146,9 @@ private:
     struct SolarBeam { float y; bool hitPlayer; };
     std::vector<SolarBeam> m_solarBeams;
 
+    // Venus
+    std::vector<ToxicCloud> m_venusClouds;
+
     // Jupiter wind + vortex
     float m_jupiterWindCycle   = 0.f;
     int   m_jupiterWindDir     = 0;    // 0=E 1=W 2=S 3=N
@@ -181,6 +199,7 @@ private:
     void updateMarsMeteorites(float dt);
     void updateMercurySolarFlare(float dt);
     void updateJupiterGimmick(float dt);
+    void updateVenusClouds(float dt);
     void renderDevMenu();
     void handleDevMenuClick(int mx, int my);
     std::vector<AABB> collectWalls() const;

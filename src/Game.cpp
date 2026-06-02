@@ -302,34 +302,91 @@ void Game::loadPlanet(int idx) {
         return;
     }
 
-    // Jupiter (4): radial vortex + dual-plate + wind redesign
-    if (idx == 4) {
-        // 4 heavy rocks — use wind to blow them onto pressure plates
-        m_puzzle.addRock(140.f,  560.f, 15.f);   // Rock A: far west  → East wind → Plate A
-        m_puzzle.addRock(990.f,  560.f, 15.f);   // Rock B: far east  → West wind → Plate B
-        m_puzzle.addRock(280.f,  400.f, 15.f);   // Rock C: mid-west (utility)
-        m_puzzle.addRock(870.f,  400.f, 15.f);   // Rock D: mid-east (utility)
+    // Venus (1): maze-like corridors + toxic clouds
+    if (idx == 1) {
+        // Rocks (can block toxic clouds, 2s stun)
+        m_puzzle.addRock(350.f, 490.f, 5.f);   // Rock A: left side
+        m_puzzle.addRock(750.f, 490.f, 5.f);   // Rock B: right side
 
-        // Dual-plate: BOTH must be pressed to open canyon door
-        m_puzzle.addPressurePlate(290.f, 568.f, 80.f, 20.f, 0);  // Plate A (west)
-        m_puzzle.addPressurePlate(792.f, 568.f, 80.f, 20.f, 0);  // Plate B (east)
-        m_puzzle.addDoor(576.f, 256.f, 64.f, 64.f);               // Canyon passage
+        // Single plate + canyon door
+        m_puzzle.addPressurePlate(492.f, 372.f, 64.f, 20.f, 0);
+        m_puzzle.addDoor(544.f, 256.f, 96.f, 64.f);  // door 0: canyon passage
 
-        // Parts in upper zone (accessible after door opens)
+        // Maze dead-end walls (doors 1-3: permanent, no plates linked)
+        m_puzzle.addDoor(192.f, 300.f, 20.f, 220.f);  // door 1: far-left dead end
+        m_puzzle.addDoor(940.f, 300.f, 20.f, 220.f);  // door 2: far-right dead end
+        m_puzzle.addDoor(476.f, 440.f, 128.f, 20.f);  // door 3: center horizontal block
+
+        // Parts in upper zone
         m_puzzle.addPart(200.f, 128.f);
         m_puzzle.addPart(900.f, 128.f);
 
         m_puzzle.setWarpGate(1096.f, 480.f);
         m_puzzle.setBaseEntrance(1096.f, 480.f);
 
-        // Energy drinks near the vortex (dangerous to collect)
-        m_puzzle.addEnergyDrink(576.f, 340.f);   // Above vortex center — warning zone
-        m_puzzle.addEnergyDrink(440.f, 450.f);   // Left vortex edge
-        m_puzzle.addEnergyDrink(712.f, 450.f);   // Right vortex edge
+        // Energy drinks near cloud patrol zones
+        m_puzzle.addEnergyDrink(380.f, 240.f);
+        m_puzzle.addEnergyDrink(820.f, 240.f);
 
-        // Reset Jupiter gimmick state
+        // Toxic clouds: (startPos, endPos, speed)
+        m_venusClouds.clear();
+        auto addCloud = [&](float x0,float y0,float x1,float y1,float spd){
+            ToxicCloud c;
+            c.startPos={x0,y0}; c.endPos={x1,y1};
+            c.pos=c.startPos; c.speed=spd; c.t=0.f;
+            m_venusClouds.push_back(c);
+        };
+        addCloud(220.f, 400.f, 550.f, 400.f, 0.20f);  // Cloud 1: lower-left horizontal
+        addCloud(650.f, 400.f, 960.f, 400.f, 0.22f);  // Cloud 2: lower-right horizontal
+        addCloud(300.f, 180.f, 700.f, 180.f, 0.18f);  // Cloud 3: upper horizontal
+        addCloud(576.f, 310.f, 576.f, 500.f, 0.16f);  // Cloud 4: center vertical
+        addCloud(100.f, 300.f, 100.f, 520.f, 0.14f);  // Cloud 5: far-left vertical
+
+        m_player.pos = {80.f, 544.f};
+        m_camX = m_camY = 0.f;
+
+        m_stellaText  = "앞이 잘 안 보여... 천천히 가야겠어.";
+        m_stellaTimer = 4.f;
+        m_ui.showNotification("독성 구름이 있어! 바위로 막을 수 있을 것 같아.", NotifType::Warning);
+
+        applyGimmickToPlayer();
+        int stgV = std::min((m_totalPartsFound * 3) / TOTAL_PARTS, 3);
+        m_ui.setShipStage(stgV);
+        return;
+    }
+
+    // Jupiter (4): vortex-reversal puzzle
+    // Vortex at (576,455). Rocks pushed toward vortex get pulled in,
+    // then stopped by pocket walls just outside the plates.
+    if (idx == 4) {
+        m_puzzle.addDoor(576.f, 256.f, 64.f, 64.f);   // door 0: canyon (opens when both plates pressed)
+        m_puzzle.addDoor(414.f, 418.f, 20.f, 72.f);   // door 1: right-catch wall for Plate A
+        m_puzzle.addDoor(698.f, 418.f, 20.f, 72.f);   // door 2: left-catch wall for Plate B
+
+        // Plates inside vortex warning zone — rocks roll in from outside and stop here
+        m_puzzle.addPressurePlate(350.f, 448.f, 64.f, 20.f, 0);  // Plate A: left (x=350–414)
+        m_puzzle.addPressurePlate(718.f, 448.f, 64.f, 20.f, 0);  // Plate B: right (x=718–782)
+
+        // Rocks: start between map edge and plate; push toward vortex → wall catches them
+        m_puzzle.addRock(200.f, 460.f, 15.f);   // Rock A: push RIGHT → stops on Plate A
+        m_puzzle.addRock(950.f, 460.f, 15.f);   // Rock B: push LEFT  → stops on Plate B
+        m_puzzle.addRock(290.f, 350.f, 15.f);   // Rock C: utility
+        m_puzzle.addRock(870.f, 350.f, 15.f);   // Rock D: utility
+
+        // Parts (upper zone)
+        m_puzzle.addPart(200.f, 128.f);
+        m_puzzle.addPart(900.f, 128.f);
+
+        m_puzzle.setWarpGate(1096.f, 480.f);
+        m_puzzle.setBaseEntrance(1096.f, 480.f);
+
+        // Energy drinks near vortex
+        m_puzzle.addEnergyDrink(576.f, 342.f);
+        m_puzzle.addEnergyDrink(450.f, 455.f);
+        m_puzzle.addEnergyDrink(700.f, 455.f);
+
         m_jupiterWindCycle   = 0.f;
-        m_jupiterWindDir     = 0;       // start: East
+        m_jupiterWindDir     = 0;
         m_jupiterWindActive  = true;
         m_jupiterWindWarning = false;
         m_jupiterPrevWarning = false;
@@ -819,6 +876,10 @@ void Game::updatePlaying(float dt) {
             }
         }
     }
+
+    // Venus toxic cloud update
+    if (m_currentPlanet == 1 && m_deathState == 0)
+        updateVenusClouds(dt);
 
     // Mars meteor shower update
     if (m_currentPlanet == 3 && m_deathState == 0)
@@ -1684,16 +1745,22 @@ void Game::renderPlaying() {
     }
 
     // Doors — red+lock when closed, green slide-up animation when opening
-    // Mars: doors ARE the canyon walls — only draw the "opening" slide, not the closed look
-    for (const auto& door : m_puzzle.doors) {
+    // Index-based loop so Jupiter/Venus can skip permanent structural walls
+    for (int _di = 0; _di < (int)m_puzzle.doors.size(); _di++) {
+        const auto& door = m_puzzle.doors[_di];
+        // Jupiter: doors 1-2 are catch-walls, rendered separately below
+        if (m_currentPlanet == 4 && _di >= 1) continue;
+        // Venus: doors 1-3 are maze walls, rendered separately below
+        if (m_currentPlanet == 1 && _di >= 1) continue;
+
         float anim = door.openAnim;
         if (anim >= 0.98f) continue;
-        if (m_currentPlanet == 3 && !door.open) continue;  // closed Mars doors = canyon, already drawn
-        float ddx  = door.area.x - m_camX;
+        if (m_currentPlanet == 3 && !door.open) continue;  // closed Mars doors = canyon
+        float ddx   = door.area.x - m_camX;
         float baseY = door.area.y - m_camY;
-        float ddw  = door.area.w;
+        float ddw   = door.area.w;
         float dh_vis = door.area.h * (1.f - anim);
-        float dy_vis = baseY + door.area.h * anim;  // top slides up
+        float dy_vis = baseY + door.area.h * anim;
         SDL_FRect rf = {ddx, dy_vis, ddw, dh_vis};
         if (!door.open) {
             float pulse = (std::sin(m_titleTimer * 3.f) + 1.f) * 0.5f;
@@ -1701,7 +1768,6 @@ void Game::renderPlaying() {
             SDL_RenderFillRectF(m_renderer, &rf);
             SDL_SetRenderDrawColor(m_renderer, 255, 65, 45, 255);
             SDL_RenderDrawRectF(m_renderer, &rf);
-            // Lock icon at door center
             if (anim < 0.05f) {
                 float lx = ddx + ddw * 0.5f;
                 float ly = baseY + door.area.h * 0.5f;
@@ -1720,6 +1786,45 @@ void Game::renderPlaying() {
             SDL_SetRenderDrawColor(m_renderer, 95, 250, 115, ga);
             SDL_RenderDrawRectF(m_renderer, &rf);
         }
+    }
+
+    // Jupiter: catch-walls rendered as orange/brown stone barriers
+    if (m_currentPlanet == 4) {
+        for (int di = 1; di < (int)m_puzzle.doors.size(); di++) {
+            const auto& d = m_puzzle.doors[di];
+            float wx = d.area.x - m_camX, wy = d.area.y - m_camY;
+            SDL_SetRenderDrawColor(m_renderer, 75, 52, 28, 255);
+            SDL_FRect rf2 = {wx, wy, d.area.w, d.area.h};
+            SDL_RenderFillRectF(m_renderer, &rf2);
+            SDL_SetRenderDrawColor(m_renderer, 108, 78, 42, 255);
+            SDL_RenderDrawRectF(m_renderer, &rf2);
+            SDL_SetRenderDrawColor(m_renderer, 55, 38, 18, 200);
+            for (float ly = wy + 12.f; ly < wy + d.area.h - 4.f; ly += 12.f)
+                SDL_RenderDrawLineF(m_renderer, wx+2.f, ly, wx+d.area.w-2.f, ly);
+        }
+    }
+
+    // Venus: maze walls rendered as dark foggy stone
+    if (m_currentPlanet == 1) {
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
+        for (int di = 1; di < (int)m_puzzle.doors.size(); di++) {
+            const auto& d = m_puzzle.doors[di];
+            float wx = d.area.x - m_camX, wy = d.area.y - m_camY;
+            SDL_SetRenderDrawColor(m_renderer, 35, 28, 14, 245);
+            SDL_FRect rf2 = {wx, wy, d.area.w, d.area.h};
+            SDL_RenderFillRectF(m_renderer, &rf2);
+            SDL_SetRenderDrawColor(m_renderer, 75, 58, 28, 200);
+            SDL_RenderDrawRectF(m_renderer, &rf2);
+            // Fog haze around wall edges
+            float fp = (std::sin(m_titleTimer * 1.8f + wx * 0.04f) + 1.f) * 0.5f;
+            Uint8 fogA = (Uint8)(22 + 18 * fp);
+            SDL_SetRenderDrawColor(m_renderer, 190, 150, 60, fogA);
+            SDL_FRect fogL = {wx-10.f, wy, 10.f, d.area.h};
+            SDL_FRect fogR = {wx+d.area.w, wy, 10.f, d.area.h};
+            SDL_RenderFillRectF(m_renderer, &fogL);
+            SDL_RenderFillRectF(m_renderer, &fogR);
+        }
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
     }
 
     // Base entrance
@@ -2005,6 +2110,91 @@ void Game::renderPlaying() {
         } else if (isNearRock()) {
             SDL_Color hc = {200, 240, 100, 210};
             m_ui.renderText(m_renderer, m_ui.getFont(), "E: 잡기", hx, hy, hc, true);
+        }
+    }
+
+    // Venus: toxic cloud rendering + emotional texts at dead ends
+    if (m_currentPlanet == 1) {
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
+
+        // Toxic clouds
+        for (const auto& c : m_venusClouds) {
+            float cx2 = c.pos.x - m_camX, cy2 = c.pos.y - m_camY;
+            // Pre-move warning: cloud grows near path endpoints
+            float edgeProx = std::min(c.t, 1.f - c.t) / 0.18f;
+            float grow = (edgeProx < 1.f) ? (1.f - edgeProx) * 7.f : 0.f;
+            float vis = c.radius + grow;
+
+            if (c.stunTimer > 0.f) {
+                // Stunned: gray flicker
+                Uint8 sa = (Uint8)(80 + 40 * std::sin(m_titleTimer * 10.f));
+                SDL_SetRenderDrawColor(m_renderer, 140, 140, 140, sa);
+                fillCircle(m_renderer, cx2, cy2, vis);
+            } else {
+                // Outer green glow
+                SDL_SetRenderDrawColor(m_renderer, 40, 200, 80, 90);
+                fillCircle(m_renderer, cx2, cy2, vis + 6.f);
+                // Main cloud body (green-purple blend)
+                SDL_SetRenderDrawColor(m_renderer, 35, 180, 70, 130);
+                fillCircle(m_renderer, cx2, cy2, vis);
+                // Inner darker core
+                SDL_SetRenderDrawColor(m_renderer, 100, 50, 140, 160);
+                fillCircle(m_renderer, cx2, cy2, vis * 0.55f);
+                // Swirling particles
+                for (int i = 0; i < 8; i++) {
+                    float a = c.wobble * 2.5f + i * 0.785f;
+                    float pr = vis * 0.72f;
+                    float px2 = cx2 + pr * std::cos(a);
+                    float py2 = cy2 + pr * std::sin(a);
+                    Uint8 pa2 = (Uint8)(140 + 80 * std::sin(c.wobble * 3.f + i));
+                    SDL_SetRenderDrawColor(m_renderer, 80, 255, 120, pa2);
+                    SDL_FRect d2 = {px2-3.f, py2-3.f, 6.f, 6.f};
+                    SDL_RenderFillRectF(m_renderer, &d2);
+                }
+            }
+        }
+
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
+
+        // Emotional texts at dead ends (like Earth signs)
+        static const struct { float x, y; const char* text; } VSIGNS[] = {
+            {180.f, 480.f, "이 길은 아닌 것 같아... 다시 돌아가야겠어."},
+            {980.f, 480.f, "짙은 안개 속에서 길을 잃었어. 천천히 생각해보자."},
+            {576.f, 530.f, "금성의 대기는 너무 두꺼워. 숨이 막힐 것 같아."},
+            {576.f, 160.f, "여기도 막혔어. 하지만 포기하지 않을 거야."},
+        };
+        if (m_ui.getFont()) {
+            for (const auto& vs : VSIGNS) {
+                float vsx = vs.x - m_camX, vsy = vs.y - m_camY;
+                float dist2 = std::abs(m_player.pos.x - vs.x) + std::abs(m_player.pos.y - vs.y);
+                float alpha2 = std::max(0.f, 1.f - dist2 / 220.f);
+                if (alpha2 < 0.02f) continue;
+                SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
+                SDL_SetRenderDrawColor(m_renderer, 15, 10, 5, (Uint8)(150 * alpha2));
+                SDL_FRect tbg = {vsx - 180.f, vsy - 18.f, 360.f, 28.f};
+                SDL_RenderFillRectF(m_renderer, &tbg);
+                SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
+                SDL_Color vtc = {210, 185, 120, (Uint8)(210 * alpha2)};
+                m_ui.renderText(m_renderer, m_ui.getFont(), vs.text, vsx, vsy - 12.f, vtc, true);
+            }
+        }
+    }
+
+    // Jupiter: hint texts near rocks ("소용돌이 방향으로 밀어봐")
+    if (m_currentPlanet == 4 && m_ui.getFont()) {
+        static const struct { float x, y; } JROCKS[] = {{200.f,460.f},{950.f,460.f}};
+        for (const auto& jr : JROCKS) {
+            float dist2 = std::abs(m_player.pos.x - jr.x) + std::abs(m_player.pos.y - jr.y);
+            float alpha2 = std::max(0.f, 1.f - dist2 / 180.f);
+            if (alpha2 < 0.02f) continue;
+            float jx = jr.x - m_camX, jy = jr.y - m_camY - 40.f;
+            SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
+            SDL_SetRenderDrawColor(m_renderer, 0, 0, 0, (Uint8)(140 * alpha2));
+            SDL_FRect hbg = {jx - 115.f, jy - 2.f, 230.f, 22.f};
+            SDL_RenderFillRectF(m_renderer, &hbg);
+            SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
+            SDL_Color htc = {255, 210, 80, (Uint8)(220 * alpha2)};
+            m_ui.renderText(m_renderer, m_ui.getFont(), "소용돌이 방향으로 밀어봐!", jx, jy, htc, true);
         }
     }
 
@@ -3223,6 +3413,39 @@ void Game::updateMarsMeteorites(float dt) {
             m_marsMeteorites.push_back(met);
         }
         m_marsNextMeteor = 5.f + (float)(rand() % 30) / 10.f; // 5-8s
+    }
+}
+
+void Game::updateVenusClouds(float dt) {
+    AABB playerAABB = m_player.getAABB();
+    for (auto& c : m_venusClouds) {
+        c.wobble += dt;
+        if (c.stunTimer > 0.f) { c.stunTimer -= dt; continue; }
+
+        float step = c.speed * dt;
+        c.t += c.forward ? step : -step;
+        if (c.t >= 1.f) { c.t = 1.f; c.forward = false; }
+        if (c.t <= 0.f) { c.t = 0.f; c.forward = true;  }
+
+        c.pos.x = c.startPos.x + (c.endPos.x - c.startPos.x) * c.t;
+        c.pos.y = c.startPos.y + (c.endPos.y - c.startPos.y) * c.t;
+
+        // Collide with player
+        if (c.getAABB().intersects(playerAABB) && m_deathState == 0)
+            loseLife();
+
+        // Collide with rocks → stun cloud 2s
+        for (const auto& rock : m_puzzle.rocks) {
+            if (!rock.active) continue;
+            if (c.getAABB().intersects(rock.getAABB())) {
+                c.stunTimer = 2.f;
+                if (!c.stunShown) {
+                    c.stunShown = true;
+                    m_ui.showNotification("바위로 구름을 막았다!", NotifType::Normal);
+                }
+                break;
+            }
+        }
     }
 }
 
