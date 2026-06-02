@@ -137,6 +137,53 @@ static const EmotionalText EARTH_SIGNS[] = {
     {550, 480, "빨리 집에 가고 싶어."},
 };
 
+// ---- Developer mode helpers ----
+
+static const int   DEV_DISPLAY_ORDER[8] = {3, 0, 1, 2, 4, 5, 6, 7};
+static const char* DEV_PLANET_NAMES[8]  = {
+    "화성","수성","금성","지구","목성","토성","천왕성","해왕성"
+};
+
+struct DevBtn {
+    SDL_FRect   rect;
+    std::string label;
+    int action;  // -1=solar, 0-7=planet surface, 10-17=planet base, 100=ending
+};
+
+static std::vector<DevBtn> buildDevMenu(int sw, int sh) {
+    std::vector<DevBtn> btns;
+    const float PW  = 440.f, PH = 510.f;
+    const float PX  = (sw - PW) * 0.5f;
+    const float PY  = (sh - PH) * 0.5f;
+    const float BH  = 34.f, GAP = 7.f;
+    const float BWF = PW - 20.f;
+    const float BWH = (PW - 30.f) * 0.5f;
+    const float LX  = PX + 10.f;
+    const float RX  = PX + 10.f + BWH + 10.f;
+    float y = PY + 52.f;
+
+    DevBtn b;
+    b.rect = {LX, y, BWF, BH}; b.label = "태양계 맵"; b.action = -1;
+    btns.push_back(b);
+    y += BH + GAP;
+
+    for (int i = 0; i < 8; i++) {
+        char la[32], lb[32];
+        std::snprintf(la, sizeof(la), "%s 외부", DEV_PLANET_NAMES[i]);
+        std::snprintf(lb, sizeof(lb), "%s 기지", DEV_PLANET_NAMES[i]);
+        DevBtn bl, br;
+        bl.rect = {LX, y, BWH, BH}; bl.label = la; bl.action = i;
+        br.rect = {RX, y, BWH, BH}; br.label = lb; br.action = i + 10;
+        btns.push_back(bl);
+        btns.push_back(br);
+        y += BH + GAP;
+    }
+    DevBtn e;
+    e.rect = {LX, y, BWF, BH}; e.label = "엔딩"; e.action = 100;
+    btns.push_back(e);
+    return btns;
+}
+
 // ---- Init / Shutdown ----
 
 bool Game::init(int sw, int sh, const std::string& title) {
@@ -428,6 +475,16 @@ void Game::handleEvents() {
 
         if (e.type == SDL_KEYDOWN) {
             auto sym = e.key.keysym.sym;
+            // Developer mode toggle (F1 works in any scene)
+            if (sym == SDLK_F1) {
+                m_devMenuOpen = !m_devMenuOpen;
+                continue;
+            }
+            // ESC closes dev menu first
+            if (sym == SDLK_ESCAPE && m_devMenuOpen) {
+                m_devMenuOpen = false;
+                continue;
+            }
             if ((sym == SDLK_RETURN || sym == SDLK_e) && m_scene == Scene::Playing
                 && m_marsLogReading >= 0) {
                 m_marsLogReading = -1;
@@ -558,6 +615,10 @@ void Game::handleEvents() {
             }
         }
         if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
+            if (m_devMenuOpen) {
+                handleDevMenuClick(e.button.x, e.button.y);
+                continue;
+            }
             if (m_scene == Scene::Prologue) {
                 m_prologueLine++;
                 m_prologueTimer = 0.f;
@@ -1135,6 +1196,20 @@ void Game::render() {
         case Scene::GameOver:       renderGameOver();       break;
         case Scene::Ending:         renderEnding();         break;
     }
+
+    // Developer mode: always-visible hint + menu overlay
+    if (m_ui.getFont()) {
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(m_renderer, 0, 0, 0, 80);
+        SDL_FRect hintBg = {(float)m_screenW - 186.f, (float)m_screenH - 28.f, 180.f, 22.f};
+        SDL_RenderFillRectF(m_renderer, &hintBg);
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
+        m_ui.renderText(m_renderer, m_ui.getFont(), "[F1: 개발자 모드]",
+                        (float)m_screenW - 96.f, (float)m_screenH - 24.f,
+                        {120, 130, 160, 150}, true);
+    }
+    renderDevMenu();
+
     SDL_RenderPresent(m_renderer);
 }
 
@@ -2727,6 +2802,117 @@ void Game::renderEnding() {
     }
 
     m_ui.renderEnding(m_renderer, m_screenW, m_screenH, m_endingTimer);
+}
+
+void Game::renderDevMenu() {
+    if (!m_devMenuOpen) return;
+
+    auto btns = buildDevMenu(m_screenW, m_screenH);
+    const float PW = 440.f, PH = 510.f;
+    const float PX = (m_screenW - PW) * 0.5f;
+    const float PY = (m_screenH - PH) * 0.5f;
+
+    int mx, my;
+    SDL_GetMouseState(&mx, &my);
+
+    SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
+
+    // Dark overlay
+    SDL_SetRenderDrawColor(m_renderer, 0, 0, 0, 195);
+    SDL_FRect full = {0.f, 0.f, (float)m_screenW, (float)m_screenH};
+    SDL_RenderFillRectF(m_renderer, &full);
+
+    // Panel
+    SDL_SetRenderDrawColor(m_renderer, 10, 14, 26, 248);
+    SDL_FRect panel = {PX, PY, PW, PH};
+    SDL_RenderFillRectF(m_renderer, &panel);
+    SDL_SetRenderDrawColor(m_renderer, 65, 105, 195, 220);
+    SDL_RenderDrawRectF(m_renderer, &panel);
+    SDL_SetRenderDrawColor(m_renderer, 65, 105, 195, 180);
+    SDL_FRect topBar = {PX, PY, PW, 4.f};
+    SDL_RenderFillRectF(m_renderer, &topBar);
+
+    // Buttons
+    for (const auto& btn : btns) {
+        bool hover = ((float)mx >= btn.rect.x && (float)mx <= btn.rect.x + btn.rect.w &&
+                      (float)my >= btn.rect.y && (float)my <= btn.rect.y + btn.rect.h);
+        if (hover)
+            SDL_SetRenderDrawColor(m_renderer, 45, 75, 155, 235);
+        else
+            SDL_SetRenderDrawColor(m_renderer, 18, 25, 50, 220);
+        SDL_RenderFillRectF(m_renderer, &btn.rect);
+        Uint8 br = hover ? 100 : 50, bg = hover ? 138 : 72, bb = hover ? 215 : 128;
+        SDL_SetRenderDrawColor(m_renderer, br, bg, bb, 200);
+        SDL_RenderDrawRectF(m_renderer, &btn.rect);
+    }
+    SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
+
+    // Title
+    if (m_ui.getFontBig())
+        m_ui.renderText(m_renderer, m_ui.getFontBig(), "개발자 모드",
+                        (float)m_screenW * 0.5f, PY + 10.f,
+                        {155, 195, 255, 255}, true);
+
+    // Button labels
+    if (m_ui.getFont()) {
+        for (const auto& btn : btns) {
+            bool hover = ((float)mx >= btn.rect.x && (float)mx <= btn.rect.x + btn.rect.w &&
+                          (float)my >= btn.rect.y && (float)my <= btn.rect.y + btn.rect.h);
+            SDL_Color tc = hover ? SDL_Color{255, 255, 255, 255}
+                                 : SDL_Color{155, 185, 225, 220};
+            m_ui.renderText(m_renderer, m_ui.getFont(), btn.label,
+                            btn.rect.x + btn.rect.w * 0.5f,
+                            btn.rect.y + (btn.rect.h - 16.f) * 0.5f,
+                            tc, true);
+        }
+        m_ui.renderText(m_renderer, m_ui.getFont(), "ESC : 닫기",
+                        (float)m_screenW * 0.5f, PY + PH - 22.f,
+                        {85, 105, 145, 175}, true);
+    }
+}
+
+void Game::handleDevMenuClick(int mx, int my) {
+    auto btns = buildDevMenu(m_screenW, m_screenH);
+    for (const auto& btn : btns) {
+        if ((float)mx < btn.rect.x || (float)mx > btn.rect.x + btn.rect.w) continue;
+        if ((float)my < btn.rect.y || (float)my > btn.rect.y + btn.rect.h) continue;
+
+        m_devMenuOpen  = false;
+        m_lives        = 3;
+        m_deathFade    = 0.f;
+        m_deathState   = 0;
+        m_grabbedRock  = -1;
+        m_stellaTimer  = 0.f;
+        m_stellaText.clear();
+
+        if (btn.action == -1) {
+            m_scene = Scene::SolarMap;
+        } else if (btn.action == 100) {
+            m_scene       = Scene::Ending;
+            m_endingTimer = 0.f;
+        } else if (btn.action >= 0 && btn.action < 8) {
+            // Planet surface
+            int pid = DEV_DISPLAY_ORDER[btn.action];
+            loadPlanet(pid);
+            m_scene = Scene::Playing;
+        } else if (btn.action >= 10 && btn.action < 18) {
+            // Planet base interior
+            int pid = DEV_DISPLAY_ORDER[btn.action - 10];
+            loadPlanet(pid);
+            m_player.pos            = {640.f, 560.f};
+            m_player.vel            = {};
+            m_player.externalVel    = {};
+            m_player.playerFriction = 1.0f;
+            m_player.speedMult      = 1.0f;
+            m_basePlayerPos         = {640.f, 560.f};
+            m_baseTimer             = 0.f;
+            m_puzzle.warpGate.active = true;
+            m_puzzle.warpGate.glowTimer     = 0.f;
+            m_puzzle.warpGate.particleTimer = 0.f;
+            m_scene = Scene::BaseInterior;
+        }
+        break;
+    }
 }
 
 void Game::updateMarsMeteorites(float dt) {

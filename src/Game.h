@@ -131,6 +131,9 @@ private:
     struct SolarBeam { float y; bool hitPlayer; };
     std::vector<SolarBeam> m_solarBeams;
 
+    // Developer mode
+    bool m_devMenuOpen = false;
+
     void handleEvents();
     void update(float dt);
     void render();
@@ -166,6 +169,8 @@ private:
     void loseLife();
     void updateMarsMeteorites(float dt);
     void updateMercurySolarFlare(float dt);
+    void renderDevMenu();
+    void handleDevMenuClick(int mx, int my);
     std::vector<AABB> collectWalls() const;
     std::vector<AABB> collectBaseWalls() const;
 
