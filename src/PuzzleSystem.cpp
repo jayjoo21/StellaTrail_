@@ -183,28 +183,34 @@ int PuzzleSystem::tryCollectDrink(const AABB& player) {
 
 bool PuzzleSystem::updateUnstablePlatforms(float dt, const AABB& playerAABB) {
     for (auto& up : unstablePlatforms) {
-        // Use non-shaken AABB for contact detection (more reliable)
+        up.justFell = false;  // reset each frame; set below when transitioning
+        if (up.fallen) continue;
+
         AABB platAABB = {up.pos.x - up.w*0.5f, up.pos.y - up.h*0.5f, up.w, up.h};
 
         if (up.state == 0) {
-            // Detect player standing on top of platform (foot contact)
             bool xOver = (playerAABB.x + playerAABB.w > platAABB.x) &&
                          (playerAABB.x < platAABB.x + platAABB.w);
             float playerBottom = playerAABB.y + playerAABB.h;
             bool onTop = xOver &&
                          (playerBottom >= platAABB.y - 2.f) &&
                          (playerBottom <= platAABB.y + 6.f);
-            if (onTop) { up.state = 1; up.timer = 3.f; }
+            if (onTop) { up.state = 1; up.timer = 2.f; }  // 2s shake per spec
         } else if (up.state == 1) {
             up.timer -= dt;
-            up.shakeAmt = 4.f * std::sin(up.timer * 22.f) * (up.timer / 3.f);
+            up.shakeAmt = 4.f * std::sin(up.timer * 22.f) * (up.timer / 2.f);
             if (up.timer <= 0.f) {
-                // Platform collapses; heat crack below handles player death naturally
-                up.state = 2; up.timer = 10.f; up.shakeAmt = 0.f;
+                up.state = 2;
+                up.timer  = 0.f;
+                up.shakeAmt = 0.f;
+                up.velY   = 0.f;
+                up.justFell = true;  // one-frame death trigger
             }
         } else if (up.state == 2) {
-            up.timer -= dt;
-            if (up.timer <= 0.f) { up.state = 0; up.timer = 0.f; }
+            // Fall with gravity
+            up.velY  += 360.f * dt;
+            up.pos.y += up.velY * dt;
+            if (up.pos.y - up.h * 0.5f > 680.f) up.fallen = true;
         }
     }
     return false;

@@ -46,9 +46,12 @@ struct EnergyDrink {
 struct UnstablePlatform {
     Vec2  pos;
     float w = 64.f, h = 14.f;
-    int   state    = 0;   // 0=solid, 1=shaking, 2=collapsed
+    int   state    = 0;   // 0=solid, 1=shaking, 2=falling, 3=gone
     float timer    = 0.f;
     float shakeAmt = 0.f;
+    float velY     = 0.f;  // falling velocity
+    bool  fallen   = false; // permanently off-screen, removed from walls
+    bool  justFell = false; // true for exactly one frame when state 1→2
     AABB getAABB() const {
         return {pos.x - w*0.5f, pos.y - h*0.5f + shakeAmt, w, h};
     }

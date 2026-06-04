@@ -44,11 +44,11 @@ static const PlanetLayout LAYOUTS[8] = {
       512,320, 32,32,   544,256, 96,64,
       {192,896,0}, {160,160,0}, 2,
       1088,480,   80,544 },
-    // Earth (2): 2 rocks, gap at cols 17-19, door 96×64
-    { {320,704,0,0}, {496,496,0,0}, 2,
-      512,336, 32,32,   544,256, 96,64,
-      {192,896,0}, {128,128,0}, 2,
-      1088,480,   80,544 },
+    // Earth (2): custom loadPlanet — vertical tower. Only startX/Y used by loseLife.
+    { {256,800,0,0}, {544,544,0,0}, 2,
+      480,528, 96,32,   512,448, 64,32,
+      {256,896,0}, {64,64,0}, 2,
+      1024,64,   128,544 },
     // Mars (3): 1 rock, gap at cols 18-21 (x=576, y=256), door 128×64
     { {384,0,0,0}, {512,0,0,0}, 1,
       384,352, 32,32,   576,256, 128,64,
@@ -127,14 +127,14 @@ static const char* GIMMICK_SPEECH[8] = {
     "강풍이다! 바위 뒤에 숨거나 타이밍을 기다려!",           // 7 Neptune
 };
 
-// Earth emotional text positions (world coords)
+// Earth emotional text — one per floor of the vertical tower
 struct EmotionalText { float x, y; const char* text; };
 static const EmotionalText EARTH_SIGNS[] = {
-    {200, 480, "누군가 살았던 흔적이 있어..."},
-    {600, 480, "이 별도 언젠간 집이었겠지."},
-    {350, 300, "여기서도 누군가 별을 바라봤을까."},
-    {800, 300, "폐허가 된 도시... 마음이 아파."},
-    {576, 160, "빨리 집에 가고 싶어."},
+    {256,  544, "누군가 살았던 흔적이 있어..."},          // 1층 (floor 2 start)
+    {800,  544, "이 별도 언젠간 집이었겠지."},             // 1층 오른쪽
+    {350,  384, "여기서도 누군가 별을 바라봤을까."},        // 2층 (floor 3)
+    {800,  384, "폐허가 된 도시... 마음이 아파."},          // 2층 오른쪽
+    {576,  224, "빨리 집에 가고 싶어."},                   // 3층 (floor 4)
 };
 
 // ---- Developer mode helpers ----
@@ -352,6 +352,57 @@ void Game::loadPlanet(int idx) {
         applyGimmickToPlayer();
         int stgV = std::min((m_totalPartsFound * 3) / TOTAL_PARTS, 3);
         m_ui.setShipStage(stgV);
+        return;
+    }
+
+    // ── Earth (2): vertical tower, crumbling platforms ─────────────────────────
+    if (idx == 2) {
+        // Barrier row 14 (y=448) center passage is blocked by door 0 initially.
+        // Left (cols 5-6, x=160-224) and right (cols 27-28, x=864-928) passages
+        // are covered by unstable platforms.
+        m_puzzle.addDoor(512.f, 448.f, 64.f, 32.f);    // door 0: barrier14 center
+
+        // Plate A: floor 2 (y≈528), linked to door 0
+        m_puzzle.addPressurePlate(448.f, 528.f, 96.f, 32.f, 0);
+
+        // Two rocks in starting floor 2
+        m_puzzle.addRock(256.f, 544.f, 5.f);
+        m_puzzle.addRock(800.f, 544.f, 5.f);
+
+        // Parts in top area (rows 1-3, y=32-96)
+        m_puzzle.addPart(256.f, 64.f);
+        m_puzzle.addPart(896.f, 64.f);
+
+        m_puzzle.setWarpGate(1024.f, 64.f);
+        m_puzzle.setBaseEntrance(1024.f, 64.f);
+
+        // Energy drinks on each floor
+        m_puzzle.addEnergyDrink(576.f, 64.f);    // top
+        m_puzzle.addEnergyDrink(256.f, 224.f);   // floor 4
+        m_puzzle.addEnergyDrink(896.f, 384.f);   // floor 3
+        m_puzzle.addEnergyDrink(576.f, 544.f);   // floor 2 start
+
+        // ── Unstable platforms covering barrier passage positions ──────────────
+        // Barrier row 14 (center y=464): left and right unstable passages
+        m_puzzle.addUnstablePlatform(192.f, 464.f, 64.f, 32.f);  // barrier14 left
+        m_puzzle.addUnstablePlatform(896.f, 464.f, 64.f, 32.f);  // barrier14 right
+        // Barrier row 9 (center y=304): center unstable passage
+        m_puzzle.addUnstablePlatform(544.f, 304.f, 64.f, 32.f);  // barrier9 center
+        // Barrier row 4 (center y=144): left and right unstable passages
+        m_puzzle.addUnstablePlatform(192.f, 144.f, 64.f, 32.f);  // barrier4 left
+        m_puzzle.addUnstablePlatform(896.f, 144.f, 64.f, 32.f);  // barrier4 right
+
+        m_player.pos = {128.f, 544.f};
+        m_camX = m_camY = 0.f;
+
+        m_stellaText  = "발판이 불안정해 보여. 빨리 이동해야겠어.";
+        m_stellaTimer = 4.5f;
+        m_gimmickSpoken = true;
+        m_ui.showNotification("한번 무너지면 돌아올 수 없어. 신중하게 가자.", NotifType::Warning);
+
+        applyGimmickToPlayer();
+        int stg2 = std::min((m_totalPartsFound * 3) / TOTAL_PARTS, 3);
+        m_ui.setShipStage(stg2);
         return;
     }
 
@@ -607,17 +658,7 @@ void Game::loadPlanet(int idx) {
     m_player.pos = {L.startX, L.startY};
     m_camX = m_camY = 0.f;
 
-    // Earth: crumbling debris tiles across the ruins
-    if (idx == 2) {
-        m_puzzle.addUnstablePlatform(240.f, 476.f, 80.f, 14.f);
-        m_puzzle.addUnstablePlatform(500.f, 476.f, 80.f, 14.f);
-        m_puzzle.addUnstablePlatform(760.f, 476.f, 80.f, 14.f);
-        m_puzzle.addUnstablePlatform(370.f, 316.f, 80.f, 14.f);
-        m_puzzle.addUnstablePlatform(680.f, 316.f, 80.f, 14.f);
-        m_stellaText  = "폐허가 된 도시... 발 아래가 무너질 수도 있어.";
-        m_stellaTimer = 4.5f;
-        m_gimmickSpoken = true;  // suppress auto gimmick speech
-    }
+    // (Earth idx=2 handled by custom block above with early return)
 
     // Saturn: ice fragment hazard setup
     if (idx == 5) {
@@ -1032,9 +1073,18 @@ void Game::updatePlaying(float dt) {
     if (m_currentPlanet == 1 && m_deathState == 0)
         updateVenusClouds(dt);
 
-    // Earth: crumbling debris tiles (no death — player just falls)
-    if (m_currentPlanet == 2)
+    // Earth: crumbling+falling platforms — death when platform collapses under player
+    if (m_currentPlanet == 2) {
         m_puzzle.updateUnstablePlatforms(dt, m_player.getAABB());
+        if (m_deathState == 0) {
+            for (const auto& up : m_puzzle.unstablePlatforms) {
+                if (up.justFell && up.getAABB().intersects(m_player.getAABB())) {
+                    loseLife();
+                    break;
+                }
+            }
+        }
+    }
 
     // Saturn: sliding ice fragments
     if (m_currentPlanet == 5 && m_deathState == 0)
@@ -1754,23 +1804,32 @@ void Game::renderPlaying() {
         SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
     }
 
-    // Earth: gray rubble atmosphere + crack pattern
+    // Earth: somber ruins atmosphere — cracks distributed across all floors
     if (m_currentPlanet == 2) {
         SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
-        // Somber overlay
-        SDL_SetRenderDrawColor(m_renderer, 22, 18, 14, 32);
+        // Somber gray-brown overlay
+        SDL_SetRenderDrawColor(m_renderer, 20, 16, 12, 28);
         SDL_FRect full2 = {0.f, 0.f, (float)m_screenW, (float)m_screenH};
         SDL_RenderFillRectF(m_renderer, &full2);
-        // Crack lines on ground
+        // Floor-level dust shadows (horizontal bands at each floor level)
+        static const float FLOOR_Y[] = {64.f, 224.f, 384.f, 544.f};
+        for (float fy : FLOOR_Y) {
+            float sy = fy - m_camY + 80.f;
+            if (sy < -40.f || sy > (float)m_screenH + 40.f) continue;
+            SDL_SetRenderDrawColor(m_renderer, 30, 24, 18, 22);
+            SDL_FRect band = {0.f, sy, (float)m_screenW, 32.f};
+            SDL_RenderFillRectF(m_renderer, &band);
+        }
+        // Crack lines — distributed across all floors
         srand(42);
-        SDL_SetRenderDrawColor(m_renderer, 18, 14, 10, 50);
-        for (int ci = 0; ci < 18; ci++) {
+        SDL_SetRenderDrawColor(m_renderer, 18, 14, 10, 45);
+        for (int ci = 0; ci < 30; ci++) {
             float cwx = (float)(rand() % 1152) - m_camX;
-            float cwy = 460.f + (rand() % 120) - m_camY;
-            float cl  = 18.f + (rand() % 40);
+            float cwy = (float)(rand() % 640) - m_camY;
+            float cl  = 15.f + (rand() % 35);
             float ca  = (rand() % 628) / 100.f;
             SDL_RenderDrawLineF(m_renderer, cwx, cwy, cwx+cl*std::cos(ca), cwy+cl*std::sin(ca));
-            SDL_RenderDrawLineF(m_renderer, cwx, cwy, cwx+cl*0.55f*std::cos(ca+0.6f), cwy+cl*0.55f*std::sin(ca+0.6f));
+            SDL_RenderDrawLineF(m_renderer, cwx, cwy, cwx+cl*0.5f*std::cos(ca+0.55f), cwy+cl*0.5f*std::sin(ca+0.55f));
         }
         SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
     }
@@ -2154,41 +2213,68 @@ void Game::renderPlaying() {
         SDL_RenderFillRectF(m_renderer, &top);
     }
 
-    // Mercury/Earth: unstable platforms (crumbling tiles)
+    // Mercury/Earth: unstable platforms (shaking + falling)
     if ((m_currentPlanet == 0 || m_currentPlanet == 2) && !m_puzzle.unstablePlatforms.empty()) {
         SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
         for (const auto& up : m_puzzle.unstablePlatforms) {
-            if (up.state == 2) continue;
+            if (up.fallen) continue;
+
             float upx = up.pos.x - m_camX;
-            float upy = up.pos.y + up.shakeAmt - m_camY;
+            float upy = up.pos.y + (up.state == 2 ? 0.f : up.shakeAmt) - m_camY;
             float upw = up.w, uph = up.h;
-            Uint8 baseGray = (up.state == 1) ? 100 : 145;
-            float crack = (up.state == 1) ? (1.f - up.timer / 3.f) : 0.f;
-            SDL_SetRenderDrawColor(m_renderer, baseGray, (Uint8)(baseGray-12), (Uint8)(baseGray-22), 230);
-            SDL_FRect rf = {upx - upw*0.5f, upy - uph*0.5f, upw, uph};
-            SDL_RenderFillRectF(m_renderer, &rf);
-            SDL_SetRenderDrawColor(m_renderer, (Uint8)(baseGray+40), (Uint8)(baseGray+28), (Uint8)(baseGray+16), 255);
-            SDL_RenderDrawRectF(m_renderer, &rf);
-            // Crack lines when shaking
-            if (up.state == 1 && crack > 0.3f) {
-                Uint8 ca = (Uint8)(200 * crack);
-                SDL_SetRenderDrawColor(m_renderer, 200, 60, 10, ca);
-                SDL_RenderDrawLineF(m_renderer, upx - upw*0.3f, upy - uph*0.5f,
-                                    upx - upw*0.1f, upy + uph*0.5f);
-                SDL_RenderDrawLineF(m_renderer, upx + upw*0.2f, upy - uph*0.5f,
-                                    upx + upw*0.4f, upy + uph*0.5f);
-            }
-            // Countdown number above shaking platform
-            if (up.state == 1 && m_ui.getFont()) {
-                int cd = std::max(1, std::min(3, (int)std::ceil(up.timer)));
-                char cdbuf[4];
-                std::snprintf(cdbuf, sizeof(cdbuf), "%d", cd);
-                SDL_Color cdCol;
-                if      (cd == 1) cdCol = {255, 60,  60,  255};
-                else if (cd == 2) cdCol = {255, 160, 40,  255};
-                else              cdCol = {255, 220, 50,  255};
-                m_ui.renderText(m_renderer, m_ui.getFont(), cdbuf,
-                                upx, upy - uph*0.5f - 18.f, cdCol, true);
+
+            // Cull off-screen
+            if (upx + upw * 0.5f < -upw || upx - upw * 0.5f > (float)m_screenW) continue;
+            if (upy + uph * 0.5f < -uph || upy - uph * 0.5f > (float)m_screenH) continue;
+
+            if (up.state == 2) {
+                // Falling animation: fade out + break apart
+                float fallPct = std::min(1.f, up.velY / 300.f);
+                Uint8 fa = (Uint8)(200.f * (1.f - fallPct * 0.8f));
+                SDL_SetRenderDrawColor(m_renderer, 90, 75, 55, fa);
+                SDL_FRect rf = {upx - upw*0.5f, upy - uph*0.5f, upw, uph};
+                SDL_RenderFillRectF(m_renderer, &rf);
+                // Break-apart debris chunks
+                srand((int)(up.pos.x) ^ (int)(up.pos.y * 0.1f));
+                for (int ci = 0; ci < 4; ci++) {
+                    float cx2 = upx - upw*0.4f + ci * upw * 0.25f + (rand()%8-4);
+                    float cy2 = upy + ci * 3.f + up.velY * 0.02f;
+                    Uint8 ca = (Uint8)(160.f * (1.f - fallPct));
+                    SDL_SetRenderDrawColor(m_renderer, 110, 90, 65, ca);
+                    SDL_FRect chunk = {cx2 - 6.f, cy2 - 4.f, 12.f, 8.f};
+                    SDL_RenderFillRectF(m_renderer, &chunk);
+                }
+            } else {
+                // State 0 (solid) or 1 (shaking)
+                Uint8 baseGray = (up.state == 1) ? 100 : 145;
+                float crack = (up.state == 1) ? (1.f - up.timer / 2.f) : 0.f;
+                SDL_SetRenderDrawColor(m_renderer, baseGray, (Uint8)(baseGray-12), (Uint8)(baseGray-22), 235);
+                SDL_FRect rf = {upx - upw*0.5f, upy - uph*0.5f, upw, uph};
+                SDL_RenderFillRectF(m_renderer, &rf);
+                SDL_SetRenderDrawColor(m_renderer, (Uint8)(baseGray+40), (Uint8)(baseGray+28), (Uint8)(baseGray+16), 255);
+                SDL_RenderDrawRectF(m_renderer, &rf);
+                // Crack lines when shaking
+                if (up.state == 1 && crack > 0.25f) {
+                    Uint8 ca = (Uint8)(220 * crack);
+                    SDL_SetRenderDrawColor(m_renderer, 210, 65, 10, ca);
+                    SDL_RenderDrawLineF(m_renderer, upx - upw*0.3f, upy - uph*0.5f,
+                                        upx - upw*0.05f, upy + uph*0.5f);
+                    SDL_RenderDrawLineF(m_renderer, upx + upw*0.15f, upy - uph*0.5f,
+                                        upx + upw*0.4f, upy + uph*0.5f);
+                    // Additional diagonal crack
+                    SDL_RenderDrawLineF(m_renderer, upx - upw*0.1f, upy,
+                                        upx + upw*0.3f, upy - uph*0.45f);
+                }
+                // Countdown above shaking platform (2s timer)
+                if (up.state == 1 && m_ui.getFont()) {
+                    int cd = std::max(1, std::min(2, (int)std::ceil(up.timer)));
+                    char cdbuf[4];
+                    std::snprintf(cdbuf, sizeof(cdbuf), "%d", cd);
+                    SDL_Color cdCol = (cd == 1) ? SDL_Color{255, 55, 55, 255}
+                                                : SDL_Color{255, 180, 40, 255};
+                    m_ui.renderText(m_renderer, m_ui.getFont(), cdbuf,
+                                    upx, upy - uph*0.5f - 18.f, cdCol, true);
+                }
             }
         }
         SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
