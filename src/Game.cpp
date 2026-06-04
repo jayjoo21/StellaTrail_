@@ -130,11 +130,11 @@ static const char* GIMMICK_SPEECH[8] = {
 // Earth emotional text positions (world coords)
 struct EmotionalText { float x, y; const char* text; };
 static const EmotionalText EARTH_SIGNS[] = {
-    {400, 160, "누군가 살았던 흔적이 있어..."},
-    {700, 128, "이 별도 언젠간 집이었겠지."},
-    {256, 352, "여기서도 누군가 별을 바라봤을까."},
-    {800, 352, "폐허가 된 도시... 마음이 아파."},
-    {550, 480, "빨리 집에 가고 싶어."},
+    {200, 480, "누군가 살았던 흔적이 있어..."},
+    {600, 480, "이 별도 언젠간 집이었겠지."},
+    {350, 300, "여기서도 누군가 별을 바라봤을까."},
+    {800, 300, "폐허가 된 도시... 마음이 아파."},
+    {576, 160, "빨리 집에 가고 싶어."},
 };
 
 // ---- Developer mode helpers ----
@@ -476,6 +476,27 @@ void Game::loadPlanet(int idx) {
 
     m_player.pos = {L.startX, L.startY};
     m_camX = m_camY = 0.f;
+
+    // Earth: crumbling debris tiles across the ruins
+    if (idx == 2) {
+        m_puzzle.addUnstablePlatform(240.f, 476.f, 80.f, 14.f);
+        m_puzzle.addUnstablePlatform(500.f, 476.f, 80.f, 14.f);
+        m_puzzle.addUnstablePlatform(760.f, 476.f, 80.f, 14.f);
+        m_puzzle.addUnstablePlatform(370.f, 316.f, 80.f, 14.f);
+        m_puzzle.addUnstablePlatform(680.f, 316.f, 80.f, 14.f);
+        m_stellaText  = "폐허가 된 도시... 발 아래가 무너질 수도 있어.";
+        m_stellaTimer = 4.5f;
+        m_gimmickSpoken = true;  // suppress auto gimmick speech
+    }
+
+    // Saturn: ice fragment hazard setup
+    if (idx == 5) {
+        m_saturnFragments.clear();
+        m_saturnNextFrag = 2.5f;
+        m_stellaText  = "너무 미끄러워! 그리고... 뭔가 날아오고 있어!";
+        m_stellaTimer = 4.5f;
+        m_gimmickSpoken = true;  // suppress auto gimmick speech
+    }
 
     applyGimmickToPlayer();
 
@@ -880,6 +901,14 @@ void Game::updatePlaying(float dt) {
     // Venus toxic cloud update
     if (m_currentPlanet == 1 && m_deathState == 0)
         updateVenusClouds(dt);
+
+    // Earth: crumbling debris tiles (no death — player just falls)
+    if (m_currentPlanet == 2)
+        m_puzzle.updateUnstablePlatforms(dt, m_player.getAABB());
+
+    // Saturn: sliding ice fragments
+    if (m_currentPlanet == 5 && m_deathState == 0)
+        updateSaturnFragments(dt);
 
     // Mars meteor shower update
     if (m_currentPlanet == 3 && m_deathState == 0)
@@ -1476,6 +1505,55 @@ void Game::renderPlaying() {
         SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
     }
 
+    // Saturn: icy atmosphere + sparkle shimmer on surfaces
+    if (m_currentPlanet == 5) {
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
+        // Cool blue-white atmospheric haze
+        SDL_SetRenderDrawColor(m_renderer, 140, 175, 220, 22);
+        SDL_FRect full5 = {0.f, 0.f, (float)m_screenW, (float)m_screenH};
+        SDL_RenderFillRectF(m_renderer, &full5);
+        // Ice sparkles
+        srand((int)(m_titleTimer * 16) ^ 555);
+        for (int i = 0; i < 50; i++) {
+            float sx = (float)(rand() % m_screenW);
+            float sy = (float)(rand() % m_screenH);
+            float blink = std::sin(m_titleTimer * 9.f + i * 0.6f);
+            if (blink > 0.5f) {
+                Uint8 spa = (Uint8)(60 + 120 * blink);
+                SDL_SetRenderDrawColor(m_renderer, 210, 230, 255, spa);
+                SDL_FRect sd2 = {sx - 1.5f, sy - 1.5f, 3.f, 3.f};
+                SDL_RenderFillRectF(m_renderer, &sd2);
+            }
+        }
+        // Horizontal golden ring stripe across middle
+        float ringGlow = (std::sin(m_titleTimer * 1.5f) + 1.f) * 0.5f;
+        SDL_SetRenderDrawColor(m_renderer, 220, 195, 90, (Uint8)(14 + 10 * ringGlow));
+        SDL_FRect ringStripe = {0.f, (float)m_screenH * 0.42f, (float)m_screenW, (float)m_screenH * 0.16f};
+        SDL_RenderFillRectF(m_renderer, &ringStripe);
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
+    }
+
+    // Earth: gray rubble atmosphere + crack pattern
+    if (m_currentPlanet == 2) {
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
+        // Somber overlay
+        SDL_SetRenderDrawColor(m_renderer, 22, 18, 14, 32);
+        SDL_FRect full2 = {0.f, 0.f, (float)m_screenW, (float)m_screenH};
+        SDL_RenderFillRectF(m_renderer, &full2);
+        // Crack lines on ground
+        srand(42);
+        SDL_SetRenderDrawColor(m_renderer, 18, 14, 10, 50);
+        for (int ci = 0; ci < 18; ci++) {
+            float cwx = (float)(rand() % 1152) - m_camX;
+            float cwy = 460.f + (rand() % 120) - m_camY;
+            float cl  = 18.f + (rand() % 40);
+            float ca  = (rand() % 628) / 100.f;
+            SDL_RenderDrawLineF(m_renderer, cwx, cwy, cwx+cl*std::cos(ca), cwy+cl*std::sin(ca));
+            SDL_RenderDrawLineF(m_renderer, cwx, cwy, cwx+cl*0.55f*std::cos(ca+0.6f), cwy+cl*0.55f*std::sin(ca+0.6f));
+        }
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
+    }
+
     // Mercury: day/night cycle overlay
     if (m_currentPlanet == 0) {
         float phase = std::fmod(m_mercuryDayCycle, 30.f) / 30.f;
@@ -1845,8 +1923,8 @@ void Game::renderPlaying() {
         SDL_RenderFillRectF(m_renderer, &top);
     }
 
-    // Mercury: unstable platforms
-    if (m_currentPlanet == 0 && !m_puzzle.unstablePlatforms.empty()) {
+    // Mercury/Earth: unstable platforms (crumbling tiles)
+    if ((m_currentPlanet == 0 || m_currentPlanet == 2) && !m_puzzle.unstablePlatforms.empty()) {
         SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
         for (const auto& up : m_puzzle.unstablePlatforms) {
             if (up.state == 2) continue;
@@ -2110,6 +2188,70 @@ void Game::renderPlaying() {
         } else if (isNearRock()) {
             SDL_Color hc = {200, 240, 100, 210};
             m_ui.renderText(m_renderer, m_ui.getFont(), "E: 잡기", hx, hy, hc, true);
+        }
+    }
+
+    // Saturn: ice fragment rendering + edge warning arrows
+    if (m_currentPlanet == 5) {
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
+        const float WARN_SEC = 0.9f;
+
+        for (const auto& frag : m_saturnFragments) {
+            if (!frag.active) continue;
+            float fx = frag.x - m_camX, fy = frag.y - m_camY;
+
+            // Edge warning: fragment off-screen but will enter within WARN_SEC
+            bool fromLeft  = (frag.vx > 0 && frag.x < m_camX       && frag.x + frag.vx * WARN_SEC >= m_camX);
+            bool fromRight = (frag.vx < 0 && frag.x > m_camX + m_screenW && frag.x + frag.vx * WARN_SEC <= m_camX + m_screenW);
+            if (fromLeft || fromRight) {
+                float arX = fromLeft ? 32.f : (float)m_screenW - 32.f;
+                float arDX = fromLeft ? 1.f : -1.f;
+                float blink2 = 0.5f + 0.5f * std::sin(m_titleTimer * 12.f);
+                Uint8 arA2 = (Uint8)(160 + 80 * blink2);
+                // Draw warning box + arrow
+                SDL_SetRenderDrawColor(m_renderer, 180, 220, 255, (Uint8)(60 * blink2));
+                SDL_FRect wbox = {fromLeft ? 0.f : (float)m_screenW - 40.f, fy - 20.f, 40.f, 40.f};
+                SDL_RenderFillRectF(m_renderer, &wbox);
+                drawWindArrow(m_renderer, arX, fy, arDX, 0.f, 26.f, arA2);
+            }
+
+            // Skip if off screen
+            if (fx + frag.radius < 0 || fx - frag.radius > (float)m_screenW) continue;
+            if (fy + frag.radius < 0 || fy - frag.radius > (float)m_screenH) continue;
+
+            // Outer glow
+            SDL_SetRenderDrawColor(m_renderer, 160, 205, 255, 100);
+            fillCircle(m_renderer, fx, fy, frag.radius + 4.f);
+            // Main body
+            SDL_SetRenderDrawColor(m_renderer, 200, 228, 255, 230);
+            fillCircle(m_renderer, fx, fy, frag.radius);
+            // Bright highlight
+            SDL_SetRenderDrawColor(m_renderer, 240, 250, 255, 255);
+            fillCircle(m_renderer, fx - frag.radius*0.28f, fy - frag.radius*0.28f, frag.radius*0.38f);
+            // Motion trail
+            float tx = fx - (frag.vx > 0 ? frag.radius*2.2f : -frag.radius*2.2f);
+            SDL_SetRenderDrawColor(m_renderer, 180, 215, 255, 60);
+            SDL_FRect trail2 = {std::min(fx, tx) - frag.radius, fy - 5.f,
+                                std::abs(fx - tx) + frag.radius * 2.f, 10.f};
+            SDL_RenderFillRectF(m_renderer, &trail2);
+        }
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
+
+        // "Ice fragment incoming!" notification once
+        if (!m_saturnFragments.empty() && m_ui.getFont()) {
+            for (const auto& frag : m_saturnFragments) {
+                float distToScreen = std::abs(frag.x - (m_camX + m_screenW * 0.5f));
+                if (distToScreen < (float)m_screenW * 0.6f) {
+                    // Fragment is near - show label
+                    float fx2 = frag.x - m_camX, fy2 = frag.y - m_camY;
+                    if (fx2 > -50.f && fx2 < (float)m_screenW + 50.f) {
+                        SDL_Color ic = {180, 220, 255, 200};
+                        m_ui.renderText(m_renderer, m_ui.getFont(), "⚠ 얼음 파편!",
+                                        fx2, fy2 - frag.radius - 18.f, ic, true);
+                    }
+                    break;
+                }
+            }
         }
     }
 
@@ -3413,6 +3555,48 @@ void Game::updateMarsMeteorites(float dt) {
             m_marsMeteorites.push_back(met);
         }
         m_marsNextMeteor = 5.f + (float)(rand() % 30) / 10.f; // 5-8s
+    }
+}
+
+void Game::updateSaturnFragments(float dt) {
+    static const float SPEED    = 185.f;
+    static const float MAP_W    = 1152.f;
+    static const float Y_LEVELS[] = {128.f, 352.f, 432.f, 512.f};
+    static const int   N_LEVELS  = 4;
+
+    AABB playerAABB = m_player.getAABB();
+
+    for (auto& frag : m_saturnFragments) {
+        if (!frag.active) continue;
+        frag.x += frag.vx * dt;
+
+        // Player collision: loseLife + knockback
+        if (!frag.hitPlayer && frag.getAABB().intersects(playerAABB)) {
+            frag.hitPlayer = true;
+            loseLife();
+            m_player.vel = {(frag.vx > 0 ? 140.f : -140.f), -90.f};
+        }
+
+        // Deactivate once fully off the map
+        if (frag.x < -60.f || frag.x > MAP_W + 60.f)
+            frag.active = false;
+    }
+
+    m_saturnFragments.erase(
+        std::remove_if(m_saturnFragments.begin(), m_saturnFragments.end(),
+                       [](const IceFragment& f){ return !f.active; }),
+        m_saturnFragments.end());
+
+    // Spawn new fragment periodically
+    m_saturnNextFrag -= dt;
+    if (m_saturnNextFrag <= 0.f) {
+        IceFragment frag;
+        frag.y  = Y_LEVELS[rand() % N_LEVELS];
+        bool fromLeft = (rand() % 2 == 0);
+        frag.x  = fromLeft ? -20.f : MAP_W + 20.f;
+        frag.vx = fromLeft ? SPEED : -SPEED;
+        m_saturnFragments.push_back(frag);
+        m_saturnNextFrag = 4.5f + (float)(rand() % 35) / 10.f;  // 4.5–8s
     }
 }
 

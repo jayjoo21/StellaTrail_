@@ -8,6 +8,16 @@
 #include "UI.h"
 #include "SolarMap.h"
 
+// Saturn ice fragments
+struct IceFragment {
+    float x, y;
+    float vx;           // horizontal velocity (positive=right)
+    bool  active    = true;
+    bool  hitPlayer = false;
+    float radius    = 14.f;
+    AABB getAABB() const { return {x-radius, y-radius, radius*2.f, radius*2.f}; }
+};
+
 // Venus toxic clouds
 struct ToxicCloud {
     Vec2  startPos, endPos, pos;
@@ -146,6 +156,10 @@ private:
     struct SolarBeam { float y; bool hitPlayer; };
     std::vector<SolarBeam> m_solarBeams;
 
+    // Saturn
+    std::vector<IceFragment> m_saturnFragments;
+    float m_saturnNextFrag = 3.f;
+
     // Venus
     std::vector<ToxicCloud> m_venusClouds;
 
@@ -200,6 +214,7 @@ private:
     void updateMercurySolarFlare(float dt);
     void updateJupiterGimmick(float dt);
     void updateVenusClouds(float dt);
+    void updateSaturnFragments(float dt);
     void renderDevMenu();
     void handleDevMenuClick(int mx, int my);
     std::vector<AABB> collectWalls() const;
