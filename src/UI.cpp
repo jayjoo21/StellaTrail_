@@ -137,28 +137,57 @@ void UI::render(SDL_Renderer* r,
     (void)totalCollected; (void)totalParts;
 }
 
+// Planet theme colors: Mars, Mercury, Venus, Earth, Jupiter, Saturn, Uranus, Neptune
+static const SDL_Color PLANET_THEME[8] = {
+    {204,  68,  68, 255},   // 0 Mercury  #CC4444
+    {204, 136,  68, 255},   // 1 Venus    #CC8844
+    { 68, 170, 102, 255},   // 2 Earth    #44AA66
+    {204,  68,  68, 255},   // 3 Mars     #CC4444
+    {204, 119,  68, 255},   // 4 Jupiter  #CC7744
+    {204, 187, 102, 255},   // 5 Saturn   #CCBB66
+    { 68, 187, 204, 255},   // 6 Uranus   #44BBCC
+    { 68, 102, 204, 255},   // 7 Neptune  #4466CC
+};
+
 void UI::renderHUD(SDL_Renderer* r,
                    int planetDone, int planetParts,
                    int planetIdx, const PlanetPhysics& physics,
                    int sw, int sh)
 {
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
-    const auto& ac = physics.ambientColor;
+    const SDL_Color& tc = PLANET_THEME[planetIdx < 8 ? planetIdx : 0];
 
-    // Planet name + gravity panel
-    SDL_SetRenderDrawColor(r, 8, 10, 20, 160);
-    SDL_FRect panel = {8.f, 8.f, 240.f, 48.f};
+    // ── Planet info panel (top-left) ─────────────────────────────────────────
+    // Panel background
+    SDL_SetRenderDrawColor(r, 6, 8, 18, 185);
+    SDL_FRect panel = {8.f, 8.f, 252.f, 52.f};
     SDL_RenderFillRectF(r, &panel);
-    SDL_SetRenderDrawColor(r, ac.r, ac.g, ac.b, 200);
-    SDL_FRect accent = {8.f, 8.f, 4.f, 48.f};
+    // Thin border
+    SDL_SetRenderDrawColor(r, tc.r, tc.g, tc.b, 120);
+    SDL_RenderDrawRectF(r, &panel);
+    // Left theme accent bar
+    SDL_SetRenderDrawColor(r, tc.r, tc.g, tc.b, 210);
+    SDL_FRect accent = {8.f, 8.f, 5.f, 52.f};
     SDL_RenderFillRectF(r, &accent);
+    // Planet dot (small filled circle proxy via rect)
+    SDL_SetRenderDrawColor(r, tc.r, tc.g, tc.b, 220);
+    SDL_FRect dot = {18.f, 16.f, 10.f, 10.f};
+    SDL_RenderFillRectF(r, &dot);
 
-    // Parts panel (below hearts area — hearts drawn in Game.cpp at y=58-88)
-    SDL_SetRenderDrawColor(r, 8, 10, 20, 150);
-    SDL_FRect partsPanel = {8.f, 90.f, 210.f, 28.f};
+    // ── Hearts panel (top-left, below info) ──────────────────────────────────
+    SDL_SetRenderDrawColor(r, 6, 8, 18, 170);
+    SDL_FRect hPanel = {8.f, 62.f, 120.f, 30.f};
+    SDL_RenderFillRectF(r, &hPanel);
+    SDL_SetRenderDrawColor(r, tc.r, tc.g, tc.b, 160);
+    SDL_FRect hAccent = {8.f, 62.f, 5.f, 30.f};
+    SDL_RenderFillRectF(r, &hAccent);
+
+    // ── Parts panel ───────────────────────────────────────────────────────────
+    SDL_SetRenderDrawColor(r, 6, 8, 18, 160);
+    SDL_FRect partsPanel = {8.f, 94.f, 220.f, 30.f};
     SDL_RenderFillRectF(r, &partsPanel);
-    SDL_SetRenderDrawColor(r, ac.r, ac.g, ac.b, 140);
-    SDL_FRect partsAccent = {8.f, 90.f, 4.f, 28.f};
+    SDL_SetRenderDrawColor(r, tc.r, tc.g, tc.b, 150);
+    SDL_FRect partsAccent = {8.f, 94.f, 5.f, 30.f};
     SDL_RenderFillRectF(r, &partsAccent);
 
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
@@ -166,31 +195,41 @@ void UI::renderHUD(SDL_Renderer* r,
     if (m_font) {
         const char* knames[8] = {"수성","금성","지구","화성","목성","토성","천왕성","해왕성"};
         char buf[64];
-        std::snprintf(buf, sizeof(buf), "%s (%s)", knames[planetIdx], physics.name);
-        renderText(r, m_font, buf, 18.f, 13.f, {220, 225, 240, 255});
-        std::snprintf(buf, sizeof(buf), "중력: %.1f m/s²", physics.gravity);
-        renderText(r, m_font, buf, 18.f, 33.f, {170, 190, 215, 220});
+        std::snprintf(buf, sizeof(buf), "%s — g %.1f m/s²", knames[planetIdx], physics.gravity);
+        renderText(r, m_font, buf, 34.f, 14.f, {220, 228, 245, 255});
+        std::snprintf(buf, sizeof(buf), "%s", physics.name);
+        renderText(r, m_font, buf, 34.f, 34.f, {tc.r, tc.g, tc.b, 210});
     }
 
-    // Part icons in parts panel
+    // Star-shaped part icons
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
     for (int i = 0; i < planetParts; i++) {
-        float ix = 18.f + i * 22.f;
-        SDL_FRect icon = {ix, 99.f, 14.f, 14.f};
-        if (i < planetDone)
-            SDL_SetRenderDrawColor(r, 255, 200, 50, 255);
-        else
-            SDL_SetRenderDrawColor(r, 55, 55, 60, 180);
-        SDL_RenderFillRectF(r, &icon);
-        SDL_SetRenderDrawColor(r, 180, 160, 80, 120);
-        SDL_RenderDrawRectF(r, &icon);
+        float cx = 22.f + i * 26.f;
+        float cy = 109.f;
+        if (i < planetDone) {
+            // Filled diamond star
+            SDL_SetRenderDrawColor(r, 255, 210, 50, 255);
+            SDL_FRect dv = {cx-2.f, cy-8.f, 4.f, 16.f};
+            SDL_FRect dh = {cx-8.f, cy-2.f, 16.f, 4.f};
+            SDL_RenderFillRectF(r, &dv);
+            SDL_RenderFillRectF(r, &dh);
+            SDL_SetRenderDrawColor(r, 255, 240, 140, 255);
+            SDL_FRect dc = {cx-3.f, cy-3.f, 6.f, 6.f};
+            SDL_RenderFillRectF(r, &dc);
+        } else {
+            SDL_SetRenderDrawColor(r, 50, 55, 65, 180);
+            SDL_FRect dv = {cx-2.f, cy-8.f, 4.f, 16.f};
+            SDL_FRect dh = {cx-8.f, cy-2.f, 16.f, 4.f};
+            SDL_RenderFillRectF(r, &dv);
+            SDL_RenderFillRectF(r, &dh);
+        }
     }
     if (m_font && planetParts > 0) {
         char buf[16];
         std::snprintf(buf, sizeof(buf), "%d/%d", planetDone, planetParts);
         renderText(r, m_font, buf,
-                   20.f + planetParts * 22.f, 99.f,
-                   {160, 170, 190, 200});
+                   22.f + planetParts * 26.f, 101.f,
+                   {tc.r, tc.g, tc.b, 200});
     }
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
 
@@ -208,11 +247,19 @@ void UI::renderMinimap(SDL_Renderer* r, int sw, int sh,
     const float mmX = (float)sw - mmW - 8.f;
     const float mmY = 8.f;
 
+    // Determine planet index from playerPos context (use ambient color approximation)
+    // We'll use a simple neutral border — theme color passed via separate call in future
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
-    SDL_SetRenderDrawColor(r, 0, 0, 0, 180);
+    // Outer shadow
+    SDL_SetRenderDrawColor(r, 0, 0, 0, 140);
+    SDL_FRect shadow = {mmX - 1.f, mmY - 1.f, mmW + 6.f, mmH + 6.f};
+    SDL_RenderFillRectF(r, &shadow);
+    // Panel background
+    SDL_SetRenderDrawColor(r, 8, 10, 22, 200);
     SDL_FRect bg = {mmX - 2.f, mmY - 2.f, mmW + 4.f, mmH + 4.f};
     SDL_RenderFillRectF(r, &bg);
-    SDL_SetRenderDrawColor(r, 60, 80, 120, 220);
+    // Theme-colored border (using a general teal as default; game overrides via planet)
+    SDL_SetRenderDrawColor(r, 60, 120, 200, 200);
     SDL_RenderDrawRectF(r, &bg);
 
     if (disabled) {
@@ -277,11 +324,11 @@ void UI::renderMinimap(SDL_Renderer* r, int sw, int sh,
 
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
 
-    if (m_font) {
-        renderText(r, m_font, "MAP",
-                   mmX + mmW * 0.5f, mmY + mmH + 2.f,
-                   {100, 120, 160, 180}, true);
-    }
+    // Bottom accent bar
+    SDL_SetRenderDrawColor(r, 60, 120, 200, 120);
+    SDL_FRect mmBot = {mmX - 2.f, mmY + mmH + 2.f, mmW + 4.f, 3.f};
+    SDL_RenderFillRectF(r, &mmBot);
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
 }
 
 void UI::renderEdgeGlow(SDL_Renderer* r, int sw, int sh, SDL_Color col, float alpha) {
@@ -339,8 +386,8 @@ void UI::renderNotification(SDL_Renderer* r, int sw, int sh) {
     float t  = m_curNotif.life;
     float mx = m_curNotif.maxLife;
     float fade;
-    if      (t < 0.4f)       fade = t / 0.4f;
-    else if (t > mx - 0.25f) fade = (mx - t) / 0.25f;
+    if      (t < 0.35f)      fade = t / 0.35f;
+    else if (t > mx - 0.3f)  fade = (mx - t) / 0.3f;
     else                     fade = 1.f;
     fade = std::max(0.f, std::min(1.f, fade));
     Uint8 a = (Uint8)(255.f * fade);
@@ -348,29 +395,36 @@ void UI::renderNotification(SDL_Renderer* r, int sw, int sh) {
 
     SDL_Color barCol;
     switch (m_curNotif.type) {
-        case NotifType::Warning: barCol = {255, 140, 40, a}; break;
-        case NotifType::Danger:  barCol = {220, 50,  50, a}; break;
-        default:                 barCol = {60,  120, 255, a}; break;
+        case NotifType::Warning: barCol = {255, 150, 40, a}; break;
+        case NotifType::Danger:  barCol = {225, 55,  55, a}; break;
+        default:                 barCol = {70,  130, 255, a}; break;
     }
 
-    const float nw = 500.f, nh = 44.f;
+    const float nw = 520.f, nh = 46.f;
     float nx = ((float)sw - nw) * 0.5f;
-    float ny = (float)sh - nh - 8.f;
+    float ny = (float)sh - nh - 10.f;
 
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
-    SDL_SetRenderDrawColor(r, 8, 10, 20, (Uint8)(200.f * fade));
+    // Shadow
+    SDL_SetRenderDrawColor(r, 0, 0, 0, (Uint8)(120.f * fade));
+    SDL_FRect shadow = {nx + 3.f, ny + 3.f, nw, nh};
+    SDL_RenderFillRectF(r, &shadow);
+    // Background
+    SDL_SetRenderDrawColor(r, 8, 10, 22, (Uint8)(210.f * fade));
     SDL_FRect bg = {nx, ny, nw, nh};
     SDL_RenderFillRectF(r, &bg);
+    // Left accent bar
     SDL_SetRenderDrawColor(r, barCol.r, barCol.g, barCol.b, a);
-    SDL_FRect bar = {nx, ny, 5.f, nh};
+    SDL_FRect bar = {nx, ny, 6.f, nh};
     SDL_RenderFillRectF(r, &bar);
-    SDL_SetRenderDrawColor(r, barCol.r, barCol.g, barCol.b, (Uint8)(80.f * fade));
+    // Thin border
+    SDL_SetRenderDrawColor(r, barCol.r, barCol.g, barCol.b, (Uint8)(90.f * fade));
     SDL_RenderDrawRectF(r, &bg);
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
 
-    SDL_Color tc = {220, 230, 255, a};
+    SDL_Color tc = {220, 232, 255, a};
     renderText(r, m_font, m_curNotif.text,
-               nx + nw * 0.5f + 2.f, ny + nh * 0.5f - 8.f, tc, true);
+               nx + nw * 0.5f + 3.f, ny + nh * 0.5f - 8.f, tc, true);
 }
 
 void UI::renderTitleScreen(SDL_Renderer* r, int sw, int sh, float timer) {

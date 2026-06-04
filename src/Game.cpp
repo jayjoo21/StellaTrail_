@@ -59,21 +59,21 @@ static const PlanetLayout LAYOUTS[8] = {
       448,352, 32,32,   576,256, 64,64,
       {224,864,0}, {128,128,0}, 2,
       1088,480,   80,544 },
-    // Saturn (5): 2 rocks, gap at cols 18-19, door 64×64
-    { {352,640,0,0}, {512,512,0,0}, 2,
-      512,352, 32,32,   576,256, 64,64,
-      {224,864,0}, {128,128,0}, 2,
-      1088,480,   80,544 },
-    // Uranus (6): 2 rocks, gap at cols 17-19, door 96×64
-    { {352,640,0,0}, {480,480,0,0}, 2,
-      480,320, 32,32,   544,256, 96,64,
-      {192,864,0}, {160,160,0}, 2,
-      1088,480,   80,544 },
-    // Neptune (7): 2 rocks, gap at cols 17-18, door 64×64, 3 parts
-    { {384,640,0,0}, {480,480,0,0}, 2,
-      512,320, 32,32,   544,256, 64,64,
-      {192,576,896}, {128,160,128}, 3,
-      1088,480,   80,544 },
+    // Saturn (5): custom loadPlanet — ring corridor. Only startX/Y used by loseLife.
+    { {300,700,0,0}, {560,560,0,0}, 2,
+      480,544, 96,32,   64,256, 96,64,
+      {224,864,0}, {96,96,0}, 2,
+      1024,560,   128,560 },
+    // Uranus (6): custom loadPlanet — staircase. Only startX/Y used by loseLife.
+    { {288,704,0,0}, {480,288,0,0}, 2,
+      416,464, 64,32,   640,0, 64,640,
+      {960,1056,0}, {288,96,0}, 2,
+      1024,480,   128,480 },
+    // Neptune (7): custom loadPlanet — 3-floor maze. Only startX/Y used by loseLife.
+    { {256,800,0,0}, {480,480,0,0}, 2,
+      480,464, 64,32,   480,352, 64,64,
+      {256,576,896}, {480,256,64}, 3,
+      1024,480,   128,480 },
 };
 
 static const int TOTAL_PARTS = 7*2 + 3;  // 17: 7 planets × 2 + Neptune × 3
@@ -404,6 +404,136 @@ void Game::loadPlanet(int idx) {
         applyGimmickToPlayer();
         int stg = std::min((m_totalPartsFound * 3) / TOTAL_PARTS, 3);
         m_ui.setShipStage(stg);
+        return;
+    }
+
+    // ── Saturn (5): ring corridor, wall-bounce ice puzzle ──────────────────────
+    if (idx == 5) {
+        // Left vertical connector blocked by door at rows 8-9 (y=256-320)
+        m_puzzle.addDoor(64.f, 256.f, 96.f, 64.f);     // door 0 in left vert
+
+        // Two plates in lower corridor: both must be pressed to open door
+        m_puzzle.addPressurePlate(352.f, 544.f, 96.f, 32.f, 0);  // Plate A
+        m_puzzle.addPressurePlate(704.f, 544.f, 96.f, 32.f, 0);  // Plate B
+
+        // Two rocks in lower corridor; icy floor → slide + wall-bounce
+        m_puzzle.addRock(256.f, 560.f, 5.f);   // Rock A: push right toward Plate A
+        m_puzzle.addRock(832.f, 560.f, 5.f);   // Rock B: push left toward Plate B
+
+        // Parts in upper corridor (accessible after door opens)
+        m_puzzle.addPart(256.f, 96.f);
+        m_puzzle.addPart(896.f, 96.f);
+
+        m_puzzle.setWarpGate(1024.f, 560.f);
+        m_puzzle.setBaseEntrance(1024.f, 560.f);
+
+        // Energy drinks in ring corridors
+        m_puzzle.addEnergyDrink(576.f, 96.f);   // upper corridor
+        m_puzzle.addEnergyDrink(96.f, 352.f);   // left vert (above door)
+        m_puzzle.addEnergyDrink(1024.f, 352.f); // right vert
+
+        m_saturnFragments.clear();
+        m_saturnNextFrag = 2.5f;
+
+        m_player.pos = {128.f, 560.f};
+        m_camX = m_camY = 0.f;
+
+        m_stellaText  = "너무 미끄러워! 벽을 이용해서 바위를 조준해봐.";
+        m_stellaTimer = 5.f;
+        m_gimmickSpoken = true;
+        m_ui.showNotification("얼음 파편이 날아오고 있어! 조심해!", NotifType::Warning);
+
+        applyGimmickToPlayer();
+        int stg5 = std::min((m_totalPartsFound * 3) / TOTAL_PARTS, 3);
+        m_ui.setShipStage(stg5);
+        return;
+    }
+
+    // ── Uranus (6): staircase, escalating left-drift puzzle ────────────────────
+    if (idx == 6) {
+        // Vertical door blocks right-side access (T2/T3/T4 terraces)
+        m_puzzle.addDoor(640.f, 0.f, 64.f, 640.f);    // door 0: full-height barrier at x=640
+
+        // Plate in left zone (T1): pushes to plate with drift assist
+        m_puzzle.addPressurePlate(416.f, 464.f, 80.f, 32.f, 0);  // Plate A
+
+        // Rocks in T1/T2 left zone (drift pulls them toward plate)
+        m_puzzle.addRock(288.f, 480.f, 5.f);   // Rock A: T1 zone
+        m_puzzle.addRock(544.f, 480.f, 5.f);   // Rock B: right side of T1
+
+        // Parts on upper terraces (accessible after door opens)
+        m_puzzle.addPart(800.f, 288.f);    // T3 terrace (col 25, row 9)
+        m_puzzle.addPart(992.f, 96.f);     // T4 terrace (col 31, row 3)
+
+        m_puzzle.setWarpGate(1024.f, 480.f);
+        m_puzzle.setBaseEntrance(1024.f, 480.f);
+
+        // Energy drinks on each terrace
+        m_puzzle.addEnergyDrink(160.f, 480.f);   // T1
+        m_puzzle.addEnergyDrink(480.f, 288.f);   // T2
+        m_puzzle.addEnergyDrink(736.f, 288.f);   // T3
+        m_puzzle.addEnergyDrink(896.f, 96.f);    // T4
+
+        m_player.pos = {128.f, 480.f};
+        m_camX = m_camY = 0.f;
+
+        m_stellaText  = "모든 게 옆으로 기울어진 느낌이야...";
+        m_stellaTimer = 4.f;
+        m_gimmickSpoken = true;
+        m_ui.showNotification("자꾸 왼쪽으로 밀려. 이걸 이용해야겠어.", NotifType::Normal);
+
+        applyGimmickToPlayer();
+        int stg6 = std::min((m_totalPartsFound * 3) / TOTAL_PARTS, 3);
+        m_ui.setShipStage(stg6);
+        return;
+    }
+
+    // ── Neptune (7): 3-floor maze, wind-timing puzzle ───────────────────────────
+    if (idx == 7) {
+        // Wind gimmick already handled in updateGimmicks.
+        // Transition passages: narrow cols 15-20 (x=480-640) at rows 4-5 and 11-12.
+        // No hard doors — wind timing is the barrier.
+
+        // Floor 1 (rows 13-18, y=416-576): start + first rock/plate
+        m_puzzle.addRock(256.f, 480.f, 5.f);    // Rock A: Floor 1
+        m_puzzle.addPressurePlate(480.f, 464.f, 96.f, 32.f, 0);
+        m_puzzle.addDoor(480.f, 352.f, 96.f, 64.f);   // door 0: blocks transition 1
+
+        // Floor 2 (rows 6-10, y=192-320): second rock pushed by wind to plate
+        m_puzzle.addRock(256.f, 256.f, 5.f);    // Rock B: Floor 2
+        m_puzzle.addPressurePlate(672.f, 240.f, 96.f, 32.f, 1);
+        m_puzzle.addDoor(480.f, 128.f, 96.f, 64.f);   // door 1: blocks transition 2
+
+        // Parts on each floor
+        m_puzzle.addPart(288.f, 480.f);    // Floor 1 left
+        m_puzzle.addPart(576.f, 256.f);    // Floor 2 center
+        m_puzzle.addPart(896.f, 64.f);     // Floor 3 right
+
+        m_puzzle.setWarpGate(1024.f, 480.f);
+        m_puzzle.setBaseEntrance(1024.f, 480.f);
+
+        // Energy drinks
+        m_puzzle.addEnergyDrink(128.f, 480.f);
+        m_puzzle.addEnergyDrink(320.f, 256.f);
+        m_puzzle.addEnergyDrink(640.f, 64.f);
+        m_puzzle.addEnergyDrink(896.f, 256.f);
+        m_puzzle.addEnergyDrink(1024.f, 480.f);
+
+        m_windCycle  = 0.f;
+        m_windActive = false;
+        m_windWarning = false;
+
+        m_player.pos = {128.f, 480.f};
+        m_camX = m_camY = 0.f;
+
+        m_stellaText  = "마지막이야. 강풍이 몰아치고 있어.";
+        m_stellaTimer = 4.f;
+        m_gimmickSpoken = true;
+        m_ui.showNotification("강풍을 피하지 말고... 이용해보자.", NotifType::Warning);
+
+        applyGimmickToPlayer();
+        int stg7 = std::min((m_totalPartsFound * 3) / TOTAL_PARTS, 3);
+        m_ui.setShipStage(stg7);
         return;
     }
 
@@ -1061,7 +1191,10 @@ void Game::updateGimmicks(float dt) {
     }
 
     if (gimmick == PlanetGimmick::SideDrift) {
-        m_puzzle.rockExternalForce = {-6.f, 0.f};  // leftward drift for rocks
+        // Drift strengthens as player goes higher (lower Y = higher on map)
+        float heightFactor = 1.f + std::max(0.f, (480.f - m_player.pos.y) / 480.f) * 1.5f;
+        m_player.externalVel = {-10.f * heightFactor, 0.f};
+        m_puzzle.rockExternalForce = {-8.f * heightFactor, 0.f};
     }
 
     if (gimmick == PlanetGimmick::HeavyGrav) {
@@ -1505,31 +1638,119 @@ void Game::renderPlaying() {
         SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
     }
 
-    // Saturn: icy atmosphere + sparkle shimmer on surfaces
+    // Saturn: ring corridor – golden haze + ice sparkles on corridor tiles
     if (m_currentPlanet == 5) {
         SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
-        // Cool blue-white atmospheric haze
-        SDL_SetRenderDrawColor(m_renderer, 140, 175, 220, 22);
+        // Deep space void tint (makes solid tiles look like black space)
+        SDL_SetRenderDrawColor(m_renderer, 4, 6, 18, 38);
         SDL_FRect full5 = {0.f, 0.f, (float)m_screenW, (float)m_screenH};
         SDL_RenderFillRectF(m_renderer, &full5);
-        // Ice sparkles
-        srand((int)(m_titleTimer * 16) ^ 555);
-        for (int i = 0; i < 50; i++) {
+        // Golden ring shimmer on corridor areas (horizontal stripes at corridor Y levels)
+        float ringGlow = (std::sin(m_titleTimer * 1.8f) + 1.f) * 0.5f;
+        static const float COR_Y[] = {64.f, 320.f, 512.f}; // world Y of corridors
+        for (float cy5 : COR_Y) {
+            float sy5 = cy5 - m_camY;
+            if (sy5 < -96.f || sy5 > (float)m_screenH + 96.f) continue;
+            SDL_SetRenderDrawColor(m_renderer, 210, 185, 80, (Uint8)(16 + 12 * ringGlow));
+            SDL_FRect stripe = {0.f, sy5, (float)m_screenW, 96.f};
+            SDL_RenderFillRectF(m_renderer, &stripe);
+        }
+        // Ice sparkles on walkable corridor surfaces
+        srand((int)(m_titleTimer * 14) ^ 555);
+        for (int i = 0; i < 60; i++) {
             float sx = (float)(rand() % m_screenW);
             float sy = (float)(rand() % m_screenH);
-            float blink = std::sin(m_titleTimer * 9.f + i * 0.6f);
-            if (blink > 0.5f) {
-                Uint8 spa = (Uint8)(60 + 120 * blink);
-                SDL_SetRenderDrawColor(m_renderer, 210, 230, 255, spa);
-                SDL_FRect sd2 = {sx - 1.5f, sy - 1.5f, 3.f, 3.f};
-                SDL_RenderFillRectF(m_renderer, &sd2);
+            float blink = std::sin(m_titleTimer * 9.f + i * 0.62f);
+            if (blink > 0.55f) {
+                Uint8 spa = (Uint8)(55 + 110 * blink);
+                SDL_SetRenderDrawColor(m_renderer, 215, 235, 255, spa);
+                // Cross sparkle
+                SDL_FRect sd2h = {sx - 3.f, sy - 0.5f, 6.f, 1.f};
+                SDL_FRect sd2v = {sx - 0.5f, sy - 3.f, 1.f, 6.f};
+                SDL_RenderFillRectF(m_renderer, &sd2h);
+                SDL_RenderFillRectF(m_renderer, &sd2v);
             }
         }
-        // Horizontal golden ring stripe across middle
-        float ringGlow = (std::sin(m_titleTimer * 1.5f) + 1.f) * 0.5f;
-        SDL_SetRenderDrawColor(m_renderer, 220, 195, 90, (Uint8)(14 + 10 * ringGlow));
-        SDL_FRect ringStripe = {0.f, (float)m_screenH * 0.42f, (float)m_screenW, (float)m_screenH * 0.16f};
-        SDL_RenderFillRectF(m_renderer, &ringStripe);
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
+    }
+
+    // Uranus: staircase atmosphere – teal left-drift haze
+    if (m_currentPlanet == 6) {
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
+        // Teal atmospheric haze, stronger on left (drift source)
+        for (int i = 0; i < 4; i++) {
+            float t = (float)i / 4.f;
+            SDL_SetRenderDrawColor(m_renderer, 30, 160, 180, (Uint8)(18 + 10 * t));
+            SDL_FRect side = {0.f, 0.f, (float)m_screenW * (0.25f * (4 - i)), (float)m_screenH};
+            SDL_RenderFillRectF(m_renderer, &side);
+        }
+        // Drift streaks blowing left
+        float dPhase = std::fmod(m_titleTimer * 0.8f, 1.f);
+        srand(1234);
+        for (int i = 0; i < 18; i++) {
+            float sy6 = (float)(rand() % m_screenH);
+            float ox  = (float)(rand() % m_screenW);
+            float px6 = std::fmod(ox - dPhase * (float)m_screenW + (float)m_screenW, (float)m_screenW);
+            float len6 = 30.f + (float)(rand() % 50);
+            Uint8 da = (Uint8)(25 + rand() % 30);
+            SDL_SetRenderDrawColor(m_renderer, 80, 200, 210, da);
+            SDL_RenderDrawLineF(m_renderer, px6, sy6, std::max(0.f, px6 - len6), sy6 + 1.f);
+        }
+        // Step edge highlights (vertical gold lines at staircase boundaries)
+        static const float STEP_X[] = {320.f, 608.f, 896.f}; // world X of step edges
+        for (float ex : STEP_X) {
+            float sxe = ex - m_camX;
+            if (sxe < -4.f || sxe > (float)m_screenW + 4.f) continue;
+            float glow6 = (std::sin(m_titleTimer * 2.5f + ex * 0.003f) + 1.f) * 0.5f;
+            SDL_SetRenderDrawColor(m_renderer, 80, 220, 220, (Uint8)(30 + 25 * glow6));
+            SDL_FRect edgeLine = {sxe - 2.f, 0.f, 4.f, (float)m_screenH};
+            SDL_RenderFillRectF(m_renderer, &edgeLine);
+        }
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
+    }
+
+    // Neptune: 3-floor indicators – floor transition zone glow
+    if (m_currentPlanet == 7) {
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
+        // Deep blue atmosphere
+        SDL_SetRenderDrawColor(m_renderer, 15, 25, 80, 28);
+        SDL_FRect full7 = {0.f, 0.f, (float)m_screenW, (float)m_screenH};
+        SDL_RenderFillRectF(m_renderer, &full7);
+        // Transition zone glow bands (at y=352-384 and y=128-160 world coords)
+        static const float TRANS_Y[] = {128.f, 352.f};
+        for (float ty7 : TRANS_Y) {
+            float sy7 = ty7 - m_camY;
+            if (sy7 < -64.f || sy7 > (float)m_screenH + 64.f) continue;
+            float glow7 = (std::sin(m_titleTimer * 3.f + ty7 * 0.01f) + 1.f) * 0.5f;
+            SDL_SetRenderDrawColor(m_renderer, 50, 100, 255, (Uint8)(20 + 18 * glow7));
+            SDL_FRect tband = {0.f, sy7, (float)m_screenW, 64.f};
+            SDL_RenderFillRectF(m_renderer, &tband);
+            // Wind passage indicator (center cols 15-20, x=480-640)
+            float px7 = 480.f - m_camX;
+            SDL_SetRenderDrawColor(m_renderer, 100, 160, 255, (Uint8)(50 + 40 * glow7));
+            SDL_FRect gap7 = {px7, sy7, 160.f, 64.f};
+            SDL_RenderFillRectF(m_renderer, &gap7);
+        }
+        // Floor level labels
+        static const struct { float y; const char* label; } FLOOR_LABELS[] = {
+            {480.f, "1층"}, {256.f, "2층"}, {64.f, "3층"}
+        };
+        if (m_ui.getFont()) {
+            for (const auto& fl : FLOOR_LABELS) {
+                float fy = fl.y - m_camY;
+                if (fy < -20.f || fy > (float)m_screenH + 20.f) continue;
+                float dist7 = std::abs(m_player.pos.y - fl.y);
+                float fa7 = std::max(0.f, 1.f - dist7 / 200.f);
+                if (fa7 < 0.05f) continue;
+                SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
+                SDL_SetRenderDrawColor(m_renderer, 10, 20, 60, (Uint8)(120 * fa7));
+                SDL_FRect lbg = {8.f, fy - 14.f, 52.f, 22.f};
+                SDL_RenderFillRectF(m_renderer, &lbg);
+                SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
+                SDL_Color lc7 = {80, 160, 255, (Uint8)(220 * fa7)};
+                m_ui.renderText(m_renderer, m_ui.getFont(), fl.label, 34.f, fy - 10.f, lc7, true);
+            }
+        }
         SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
     }
 
@@ -1790,35 +2011,45 @@ void Game::renderPlaying() {
         SDL_RenderFillRectF(m_renderer, &overlay);
     }
 
-    // Pressure plates — button look: gray inactive / green+glow active
-    for (const auto& plate : m_puzzle.plates) {
-        float ppx = plate.area.x - m_camX, ppy = plate.area.y - m_camY;
-        float ppw = plate.area.w, pph = plate.area.h;
-        float glow = (std::sin(m_titleTimer * 5.f) + 1.f) * 0.5f;
-        if (plate.pressed) {
-            SDL_SetRenderDrawColor(m_renderer, 25, (Uint8)(145+65*glow), 45, 200);
-            SDL_FRect outer = {ppx-4.f, ppy-4.f, ppw+8.f, pph+8.f};
-            SDL_RenderFillRectF(m_renderer, &outer);
-            SDL_SetRenderDrawColor(m_renderer, 55, 225, 85, 255);
-            SDL_FRect rf = {ppx, ppy, ppw, pph};
-            SDL_RenderFillRectF(m_renderer, &rf);
-            SDL_SetRenderDrawColor(m_renderer, 150, 255, 170, 220);
-            SDL_RenderDrawRectF(m_renderer, &rf);
-            SDL_SetRenderDrawColor(m_renderer, 190, 255, 205, 220);
-            SDL_RenderDrawLineF(m_renderer, ppx+ppw*0.2f, ppy+pph*0.5f, ppx+ppw*0.8f, ppy+pph*0.5f);
-            SDL_RenderDrawLineF(m_renderer, ppx+ppw*0.5f, ppy+pph*0.12f, ppx+ppw*0.5f, ppy+pph*0.88f);
-        } else {
-            SDL_SetRenderDrawColor(m_renderer, 68, 70, 80, 210);
-            SDL_FRect rf = {ppx, ppy, ppw, pph};
-            SDL_RenderFillRectF(m_renderer, &rf);
-            SDL_SetRenderDrawColor(m_renderer, 100, 103, 118, 255);
-            SDL_RenderDrawRectF(m_renderer, &rf);
-            SDL_SetRenderDrawColor(m_renderer, 50, 52, 60, 210);
-            SDL_FRect inner = {ppx+3.f, ppy+3.f, ppw-6.f, pph-6.f};
-            SDL_RenderFillRectF(m_renderer, &inner);
-            SDL_SetRenderDrawColor(m_renderer, 90, 93, 108, 130);
-            SDL_RenderDrawLineF(m_renderer, ppx+ppw*0.2f, ppy+pph*0.5f, ppx+ppw*0.8f, ppy+pph*0.5f);
-            SDL_RenderDrawLineF(m_renderer, ppx+ppw*0.5f, ppy+pph*0.12f, ppx+ppw*0.5f, ppy+pph*0.88f);
+    // Pressure plates — circular theme-colored pads, active = glowing
+    {
+        static const SDL_Color PT[8] = {
+            {204, 68, 68,255},{204,136,68,255},{68,170,102,255},{204,68,68,255},
+            {204,119,68,255},{204,187,102,255},{68,187,204,255},{68,102,204,255}
+        };
+        const SDL_Color& thc = PT[m_currentPlanet < 8 ? m_currentPlanet : 0];
+        for (const auto& plate : m_puzzle.plates) {
+            float ppx = plate.area.x - m_camX + plate.area.w * 0.5f;
+            float ppy = plate.area.y - m_camY + plate.area.h * 0.5f;
+            float rad = std::min(plate.area.w, plate.area.h) * 0.55f;
+            float glow = (std::sin(m_titleTimer * 5.f) + 1.f) * 0.5f;
+            SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
+            if (plate.pressed) {
+                // Outer glow ring
+                SDL_SetRenderDrawColor(m_renderer, thc.r, thc.g, thc.b, (Uint8)(60 + 60*glow));
+                SDL_FRect glowRect = {ppx-rad-6.f, ppy-rad-6.f, (rad+6.f)*2.f, (rad+6.f)*2.f};
+                SDL_RenderFillRectF(m_renderer, &glowRect);
+                // Main circle
+                SDL_SetRenderDrawColor(m_renderer, thc.r, thc.g, thc.b, 230);
+                SDL_FRect rf = {ppx - rad, ppy - rad, rad*2.f, rad*2.f};
+                SDL_RenderFillRectF(m_renderer, &rf);
+                // Bright center
+                SDL_SetRenderDrawColor(m_renderer, 220, 240, 255, (Uint8)(200 + 55*glow));
+                SDL_FRect ctr = {ppx-rad*0.35f, ppy-rad*0.35f, rad*0.7f, rad*0.7f};
+                SDL_RenderFillRectF(m_renderer, &ctr);
+            } else {
+                // Inactive: dark pad with dim theme outline
+                SDL_SetRenderDrawColor(m_renderer, 42, 44, 52, 220);
+                SDL_FRect rf = {ppx - rad, ppy - rad, rad*2.f, rad*2.f};
+                SDL_RenderFillRectF(m_renderer, &rf);
+                SDL_SetRenderDrawColor(m_renderer, thc.r, thc.g, thc.b, 100);
+                SDL_RenderDrawRectF(m_renderer, &rf);
+                // Inner cross
+                SDL_SetRenderDrawColor(m_renderer, 80, 85, 100, 140);
+                SDL_RenderDrawLineF(m_renderer, ppx-rad*0.5f, ppy, ppx+rad*0.5f, ppy);
+                SDL_RenderDrawLineF(m_renderer, ppx, ppy-rad*0.5f, ppx, ppy+rad*0.5f);
+            }
+            SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
         }
     }
 
@@ -2634,28 +2865,64 @@ void Game::renderPlaying() {
                 m_windWarning,
                 m_stellaText, stellaAlpha);
 
-    // Lives HUD (hearts panel, below planet/gravity panel)
+    // Lives HUD (hearts — panel drawn in renderHUD, just draw hearts here)
     {
-        const auto& ac2 = curPhysics().ambientColor;
         SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
-        SDL_SetRenderDrawColor(m_renderer, 8, 10, 20, 150);
-        SDL_FRect hPanel = {8.f, 58.f, 110.f, 30.f};
-        SDL_RenderFillRectF(m_renderer, &hPanel);
-        SDL_SetRenderDrawColor(m_renderer, ac2.r, ac2.g, ac2.b, 150);
-        SDL_FRect hAccent = {8.f, 58.f, 4.f, 30.f};
-        SDL_RenderFillRectF(m_renderer, &hAccent);
-
-        float hx0 = 24.f, hy0 = 73.f, hs = 10.f, gap = 26.f;
+        float hx0 = 24.f, hy0 = 77.f, hs = 10.f, gap = 28.f;
         for (int i = 0; i < 3; i++) {
             bool filled = (i < m_lives);
             float pulse = (m_lives == 1 && filled)
                 ? (0.5f + 0.5f * std::sin(m_titleTimer * 6.f)) : 1.f;
-            Uint8 alpha = filled ? (Uint8)(230 * pulse) : 70;
-            if (filled) SDL_SetRenderDrawColor(m_renderer, 220, 50, 50, alpha);
-            else        SDL_SetRenderDrawColor(m_renderer, 80, 80, 80, alpha);
+            Uint8 alpha = filled ? (Uint8)(235 * pulse) : 65;
+            if (filled) SDL_SetRenderDrawColor(m_renderer, 220, 55, 55, alpha);
+            else        SDL_SetRenderDrawColor(m_renderer, 70, 70, 75, alpha);
             drawHeart(m_renderer, hx0 + i * gap, hy0, hs);
         }
         SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
+    }
+
+    // Uranus-specific UI: drift intensity indicator
+    if (m_currentPlanet == 6 && m_ui.getFont()) {
+        float heightFactor = 1.f + std::max(0.f, (480.f - m_player.pos.y) / 480.f) * 1.5f;
+        int driftPct = (int)(heightFactor * 100.f);
+        char driftBuf[48];
+        std::snprintf(driftBuf, sizeof(driftBuf), "← 드리프트 강도: %d%%", driftPct);
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(m_renderer, 6, 8, 22, 170);
+        SDL_FRect db = {(float)m_screenW - 220.f, (float)m_screenH - 52.f, 212.f, 46.f};
+        SDL_RenderFillRectF(m_renderer, &db);
+        SDL_SetRenderDrawColor(m_renderer, 68, 187, 204, 160);
+        SDL_RenderDrawRectF(m_renderer, &db);
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
+        SDL_Color dc = {68, 210, 220, 220};
+        m_ui.renderText(m_renderer, m_ui.getFont(), driftBuf,
+                        (float)m_screenW - 114.f, (float)m_screenH - 44.f, dc, true);
+    }
+
+    // Neptune-specific UI: wind cycle timer + floor indicator
+    if (m_currentPlanet == 7 && m_ui.getFont()) {
+        // Determine current floor
+        const char* floorLabel = m_player.pos.y > 384.f ? "1층" :
+                                  m_player.pos.y > 160.f ? "2층" : "3층";
+        char windBuf[48];
+        if (m_windWarning)
+            std::snprintf(windBuf, sizeof(windBuf), "⚠ 강풍 예고!  현재: %s", floorLabel);
+        else if (m_windActive)
+            std::snprintf(windBuf, sizeof(windBuf), "강풍 진행 중  현재: %s", floorLabel);
+        else
+            std::snprintf(windBuf, sizeof(windBuf), "강풍 대기 중  현재: %s", floorLabel);
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(m_renderer, 6, 8, 22, 170);
+        SDL_FRect nb = {(float)m_screenW - 240.f, (float)m_screenH - 52.f, 232.f, 46.f};
+        SDL_RenderFillRectF(m_renderer, &nb);
+        SDL_SetRenderDrawColor(m_renderer, 68, 102, 204, 160);
+        SDL_RenderDrawRectF(m_renderer, &nb);
+        SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
+        SDL_Color nc = m_windWarning ? SDL_Color{255, 120, 80, 230} :
+                       m_windActive  ? SDL_Color{100, 180, 255, 230} :
+                                       SDL_Color{150, 190, 255, 200};
+        m_ui.renderText(m_renderer, m_ui.getFont(), windBuf,
+                        (float)m_screenW - 124.f, (float)m_screenH - 44.f, nc, true);
     }
 
     // Mercury-specific UI
@@ -3561,8 +3828,9 @@ void Game::updateMarsMeteorites(float dt) {
 void Game::updateSaturnFragments(float dt) {
     static const float SPEED    = 185.f;
     static const float MAP_W    = 1152.f;
-    static const float Y_LEVELS[] = {128.f, 352.f, 432.f, 512.f};
-    static const int   N_LEVELS  = 4;
+    // Ring corridor Y levels: upper corridor (96), middle corridor (352), lower corridor (560)
+    static const float Y_LEVELS[] = {96.f, 352.f, 560.f};
+    static const int   N_LEVELS  = 3;
 
     AABB playerAABB = m_player.getAABB();
 
