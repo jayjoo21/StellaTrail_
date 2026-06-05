@@ -462,8 +462,9 @@ void Game::loadPlanet(int idx) {
 
     // ── Saturn (5): 4-tile ring corridor, space-black void, wall-bounce puzzle ─
     if (idx == 5) {
-        // Tile 2 (solid/void) → pure black (space). Tile 4 (corridor) → golden hue.
-        m_map.setColorOverride(2, {2,  2,  8, 255});   // void = near-black space
+        // Tile 0 (non-solid void) → near-black space. Tile 4 (corridor) → golden.
+        // Tile 2 kept as solid border walls (rows 0,1,18,19 + col 0,35).
+        m_map.setColorOverride(0, {2,  2,  8, 255});   // void = near-black space
         m_map.setColorOverride(4, {210,185,100,255});  // corridor = golden sand
 
         // Left vertical (cols 1-4) blocked by door at rows 8-9 (y=256, 4-tile wide)
@@ -518,8 +519,8 @@ void Game::loadPlanet(int idx) {
         m_uranusCliffs.push_back({608.f, 192.f, 32.f, 96.f}); // cliff B (col 19, rows 6-8)
         m_uranusCliffs.push_back({896.f,  96.f, 32.f, 96.f}); // cliff C (col 28, rows 3-5)
 
-        // Door 0: tall barrier at T2-T3 boundary (x=576, rows 9-18)
-        m_puzzle.addDoor(576.f, 288.f, 64.f, 320.f);
+        // Door 0: barrier at T2-T3 boundary (x=576, rows 9-11, 3 tiles tall)
+        m_puzzle.addDoor(576.f, 288.f, 64.f, 96.f);
 
         // Plate A: T2 area — drift pulls rocks toward it from right
         m_puzzle.addPressurePlate(352.f, 464.f, 80.f, 32.f, 0);
@@ -847,6 +848,11 @@ void Game::handleEvents() {
                         jdir = {std::cos(rad), std::sin(rad)};
                     }
                     m_player.startJump(jdir);
+                    // Neptune: wind-boosted jump — 강풍 발동 중 위로 점프 시 +200px/s 부스트
+                    if (m_currentPlanet == 7 && m_windActive && jdir.y < -0.1f) {
+                        m_player.vel.y -= 200.f;
+                        m_ui.showNotification("강풍을 타고 올라간다!", NotifType::Normal);
+                    }
                 }
             }
             if (sym == SDLK_e && m_scene == Scene::BaseInterior) {
@@ -1105,6 +1111,18 @@ void Game::updatePlaying(float dt) {
     if (m_currentPlanet == 5 && m_deathState == 0)
         updateSaturnFragments(dt);
 
+    // Saturn: void death — tile 0 = open space, instantly fatal
+    if (m_currentPlanet == 5 && m_deathState == 0) {
+        AABB pa5 = m_player.getAABB();
+        auto voidAt = [&](float x, float y) {
+            return m_map.getTileId((int)(x / 32.f), (int)(y / 32.f)) == 0;
+        };
+        if (voidAt(pa5.x + 2.f, pa5.y + 2.f) || voidAt(pa5.x + pa5.w - 2.f, pa5.y + 2.f) ||
+            voidAt(pa5.x + 2.f, pa5.y + pa5.h - 2.f) || voidAt(pa5.x + pa5.w - 2.f, pa5.y + pa5.h - 2.f)) {
+            loseLife();
+        }
+    }
+
     // Uranus: cliff death (tile 0 void between staircase terraces)
     if (m_currentPlanet == 6 && m_deathState == 0) {
         AABB pa6 = m_player.getAABB();
@@ -1243,7 +1261,7 @@ void Game::updateGimmicks(float dt) {
         m_windCycle += dt;
         if (m_windCycle >= 5.0f) m_windCycle = 0.f;
 
-        bool newWarning = (m_windCycle > 1.5f && m_windCycle < 3.5f);
+        bool newWarning = (m_windCycle > 0.5f && m_windCycle < 3.5f);  // 3초 예고
         bool newActive  = (m_windCycle >= 3.5f);
 
         // First wind warning
@@ -2562,15 +2580,22 @@ void Game::renderPlaying() {
             bool fromLeft  = (frag.vx > 0 && frag.x < m_camX       && frag.x + frag.vx * WARN_SEC >= m_camX);
             bool fromRight = (frag.vx < 0 && frag.x > m_camX + m_screenW && frag.x + frag.vx * WARN_SEC <= m_camX + m_screenW);
             if (fromLeft || fromRight) {
-                float arX = fromLeft ? 32.f : (float)m_screenW - 32.f;
+                float arX  = fromLeft ? 36.f : (float)m_screenW - 36.f;
                 float arDX = fromLeft ? 1.f : -1.f;
                 float blink2 = 0.5f + 0.5f * std::sin(m_titleTimer * 12.f);
-                Uint8 arA2 = (Uint8)(160 + 80 * blink2);
-                // Draw warning box + arrow
-                SDL_SetRenderDrawColor(m_renderer, 180, 220, 255, (Uint8)(60 * blink2));
-                SDL_FRect wbox = {fromLeft ? 0.f : (float)m_screenW - 40.f, fy - 20.f, 40.f, 40.f};
+                Uint8 arA2 = (Uint8)(180 + 70 * blink2);
+                // Red warning box
+                SDL_SetRenderDrawColor(m_renderer, 255, 60, 60, (Uint8)(65 * blink2));
+                SDL_FRect wbox = {fromLeft ? 0.f : (float)m_screenW - 44.f, fy - 22.f, 44.f, 44.f};
                 SDL_RenderFillRectF(m_renderer, &wbox);
-                drawWindArrow(m_renderer, arX, fy, arDX, 0.f, 26.f, arA2);
+                SDL_SetRenderDrawColor(m_renderer, 255, 60, 60, arA2);
+                SDL_RenderDrawRectF(m_renderer, &wbox);
+                // Red arrow (inline — drawWindArrow uses yellow internally)
+                float ex = arX + arDX * 26.f;
+                SDL_SetRenderDrawColor(m_renderer, 255, 60, 60, arA2);
+                SDL_RenderDrawLineF(m_renderer, arX, fy, ex, fy);
+                SDL_RenderDrawLineF(m_renderer, ex, fy, ex - arDX*10.f, fy - 9.f);
+                SDL_RenderDrawLineF(m_renderer, ex, fy, ex - arDX*10.f, fy + 9.f);
             }
 
             // Skip if off screen
