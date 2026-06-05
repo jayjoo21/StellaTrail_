@@ -59,16 +59,16 @@ static const PlanetLayout LAYOUTS[8] = {
       448,352, 32,32,   576,256, 64,64,
       {224,864,0}, {128,128,0}, 2,
       1088,480,   80,544 },
-    // Saturn (5): custom loadPlanet — ring corridor. Only startX/Y used by loseLife.
-    { {300,700,0,0}, {560,560,0,0}, 2,
-      480,544, 96,32,   64,256, 96,64,
-      {224,864,0}, {96,96,0}, 2,
-      1024,560,   128,560 },
-    // Uranus (6): custom loadPlanet — staircase. Only startX/Y used by loseLife.
-    { {288,704,0,0}, {480,288,0,0}, 2,
-      416,464, 64,32,   640,0, 64,640,
-      {960,1056,0}, {288,96,0}, 2,
-      1024,480,   128,480 },
+    // Saturn (5): custom loadPlanet — 4-tile ring. Only startX/Y used by loseLife.
+    { {256,800,0,0}, {512,512,0,0}, 2,
+      480,496, 128,32,  32,256,128,64,
+      {256,96,0}, {96,96,0}, 2,
+      1056,512,  96,512 },
+    // Uranus (6): custom loadPlanet — staircase+cliffs. Only startX/Y used by loseLife.
+    { {160,416,0,0}, {480,480,0,0}, 2,
+      352,464, 64,32,   576,288, 64,320,
+      {800,1056,0}, {192,192,0}, 2,
+      1056,480,  96,480 },
     // Neptune (7): custom loadPlanet — 3-floor maze. Only startX/Y used by loseLife.
     { {256,800,0,0}, {480,480,0,0}, 2,
       480,464, 64,32,   480,352, 64,64,
@@ -235,6 +235,8 @@ void Game::loadPlanet(int idx) {
 
     m_map = TileMap();
     m_map.load(PLANET_MAPS[idx], m_renderer, "");
+    // clearColorOverrides() is called implicitly via fresh TileMap(); tile overrides
+    // are set per-planet in their custom loadPlanet blocks below.
 
     m_puzzle = PuzzleSystem();
     m_puzzle.setPlanetPhysics(Planets::ALL[idx]);
@@ -458,35 +460,39 @@ void Game::loadPlanet(int idx) {
         return;
     }
 
-    // ── Saturn (5): ring corridor, wall-bounce ice puzzle ──────────────────────
+    // ── Saturn (5): 4-tile ring corridor, space-black void, wall-bounce puzzle ─
     if (idx == 5) {
-        // Left vertical connector blocked by door at rows 8-9 (y=256-320)
-        m_puzzle.addDoor(64.f, 256.f, 96.f, 64.f);     // door 0 in left vert
+        // Tile 2 (solid/void) → pure black (space). Tile 4 (corridor) → golden hue.
+        m_map.setColorOverride(2, {2,  2,  8, 255});   // void = near-black space
+        m_map.setColorOverride(4, {210,185,100,255});  // corridor = golden sand
 
-        // Two plates in lower corridor: both must be pressed to open door
-        m_puzzle.addPressurePlate(352.f, 544.f, 96.f, 32.f, 0);  // Plate A
-        m_puzzle.addPressurePlate(704.f, 544.f, 96.f, 32.f, 0);  // Plate B
+        // Left vertical (cols 1-4) blocked by door at rows 8-9 (y=256, 4-tile wide)
+        m_puzzle.addDoor(32.f, 256.f, 128.f, 64.f);    // door 0: left vert rows 8-9
 
-        // Two rocks in lower corridor; icy floor → slide + wall-bounce
-        m_puzzle.addRock(256.f, 560.f, 5.f);   // Rock A: push right toward Plate A
-        m_puzzle.addRock(832.f, 560.f, 5.f);   // Rock B: push left toward Plate B
+        // Two plates in lower corridor; both pressed → door opens
+        m_puzzle.addPressurePlate(352.f, 496.f, 128.f, 32.f, 0);  // Plate A
+        m_puzzle.addPressurePlate(704.f, 496.f, 128.f, 32.f, 0);  // Plate B
 
-        // Parts in upper corridor (accessible after door opens)
-        m_puzzle.addPart(256.f, 96.f);
-        m_puzzle.addPart(896.f, 96.f);
+        // Two rocks — icy floor: push toward wall, bounces to plate
+        m_puzzle.addRock(224.f, 512.f, 5.f);   // Rock A
+        m_puzzle.addRock(864.f, 512.f, 5.f);   // Rock B
 
-        m_puzzle.setWarpGate(1024.f, 560.f);
-        m_puzzle.setBaseEntrance(1024.f, 560.f);
+        // Parts in upper corridor (rows 2-5, y=64-192, center y=128)
+        m_puzzle.addPart(256.f, 128.f);
+        m_puzzle.addPart(896.f, 128.f);
 
-        // Energy drinks in ring corridors
-        m_puzzle.addEnergyDrink(576.f, 96.f);   // upper corridor
-        m_puzzle.addEnergyDrink(96.f, 352.f);   // left vert (above door)
-        m_puzzle.addEnergyDrink(1024.f, 352.f); // right vert
+        m_puzzle.setWarpGate(1056.f, 512.f);
+        m_puzzle.setBaseEntrance(1056.f, 512.f);
+
+        // Energy drinks in ring
+        m_puzzle.addEnergyDrink(576.f, 128.f);   // upper corridor center
+        m_puzzle.addEnergyDrink(64.f,  352.f);   // left vert mid
+        m_puzzle.addEnergyDrink(1056.f,352.f);   // right vert mid
 
         m_saturnFragments.clear();
         m_saturnNextFrag = 2.5f;
 
-        m_player.pos = {128.f, 560.f};
+        m_player.pos = {96.f, 512.f};
         m_camX = m_camY = 0.f;
 
         m_stellaText  = "너무 미끄러워! 벽을 이용해서 바위를 조준해봐.";
@@ -500,32 +506,41 @@ void Game::loadPlanet(int idx) {
         return;
     }
 
-    // ── Uranus (6): staircase, escalating left-drift puzzle ────────────────────
+    // ── Uranus (6): 4-step staircase, cliff voids, drift 30% max ──────────────
     if (idx == 6) {
-        // Vertical door blocks right-side access (T2/T3/T4 terraces)
-        m_puzzle.addDoor(640.f, 0.f, 64.f, 640.f);    // door 0: full-height barrier at x=640
+        // Tile 0 = cliff void (abyss), tile 5 = teal stone floor
+        m_map.setColorOverride(0, {8,  20, 35, 255});
+        m_map.setColorOverride(5, {55, 80, 90, 255});
 
-        // Plate in left zone (T1): pushes to plate with drift assist
-        m_puzzle.addPressurePlate(416.f, 464.f, 80.f, 32.f, 0);  // Plate A
+        // Cliff death zones (tile 0 void positions between staircase terraces)
+        m_uranusCliffs.clear();
+        m_uranusCliffs.push_back({288.f, 288.f, 32.f, 96.f}); // cliff A (col 9, rows 9-11)
+        m_uranusCliffs.push_back({608.f, 192.f, 32.f, 96.f}); // cliff B (col 19, rows 6-8)
+        m_uranusCliffs.push_back({896.f,  96.f, 32.f, 96.f}); // cliff C (col 28, rows 3-5)
 
-        // Rocks in T1/T2 left zone (drift pulls them toward plate)
-        m_puzzle.addRock(288.f, 480.f, 5.f);   // Rock A: T1 zone
-        m_puzzle.addRock(544.f, 480.f, 5.f);   // Rock B: right side of T1
+        // Door 0: tall barrier at T2-T3 boundary (x=576, rows 9-18)
+        m_puzzle.addDoor(576.f, 288.f, 64.f, 320.f);
 
-        // Parts on upper terraces (accessible after door opens)
-        m_puzzle.addPart(800.f, 288.f);    // T3 terrace (col 25, row 9)
-        m_puzzle.addPart(992.f, 96.f);     // T4 terrace (col 31, row 3)
+        // Plate A: T2 area — drift pulls rocks toward it from right
+        m_puzzle.addPressurePlate(352.f, 464.f, 80.f, 32.f, 0);
 
-        m_puzzle.setWarpGate(1024.f, 480.f);
-        m_puzzle.setBaseEntrance(1024.f, 480.f);
+        // Rocks: T1 and T2
+        m_puzzle.addRock(160.f, 480.f, 5.f);
+        m_puzzle.addRock(448.f, 480.f, 5.f);
 
-        // Energy drinks on each terrace
-        m_puzzle.addEnergyDrink(160.f, 480.f);   // T1
-        m_puzzle.addEnergyDrink(480.f, 288.f);   // T2
-        m_puzzle.addEnergyDrink(736.f, 288.f);   // T3
-        m_puzzle.addEnergyDrink(896.f, 96.f);    // T4
+        // Parts: T3 and T4 upper areas (reachable after door opens + navigating cliffs)
+        m_puzzle.addPart(800.f, 256.f);    // T3 (col 25, row 8)
+        m_puzzle.addPart(1056.f,160.f);    // T4 (col 33, row 5)
 
-        m_player.pos = {128.f, 480.f};
+        m_puzzle.setWarpGate(1056.f, 480.f);
+        m_puzzle.setBaseEntrance(1056.f, 480.f);
+
+        m_puzzle.addEnergyDrink(128.f, 480.f);
+        m_puzzle.addEnergyDrink(384.f, 480.f);
+        m_puzzle.addEnergyDrink(736.f, 384.f);
+        m_puzzle.addEnergyDrink(992.f, 384.f);
+
+        m_player.pos = {96.f, 480.f};
         m_camX = m_camY = 0.f;
 
         m_stellaText  = "모든 게 옆으로 기울어진 느낌이야...";
@@ -1090,6 +1105,14 @@ void Game::updatePlaying(float dt) {
     if (m_currentPlanet == 5 && m_deathState == 0)
         updateSaturnFragments(dt);
 
+    // Uranus: cliff death (tile 0 void between staircase terraces)
+    if (m_currentPlanet == 6 && m_deathState == 0) {
+        AABB pa6 = m_player.getAABB();
+        for (const auto& cliff : m_uranusCliffs) {
+            if (pa6.intersects(cliff)) { loseLife(); break; }
+        }
+    }
+
     // Mars meteor shower update
     if (m_currentPlanet == 3 && m_deathState == 0)
         updateMarsMeteorites(dt);
@@ -1241,10 +1264,10 @@ void Game::updateGimmicks(float dt) {
     }
 
     if (gimmick == PlanetGimmick::SideDrift) {
-        // Drift strengthens as player goes higher (lower Y = higher on map)
-        float heightFactor = 1.f + std::max(0.f, (480.f - m_player.pos.y) / 480.f) * 1.5f;
-        m_player.externalVel = {-10.f * heightFactor, 0.f};
-        m_puzzle.rockExternalForce = {-8.f * heightFactor, 0.f};
+        // Max 30% stronger at the top terrace (manageable but noticeable)
+        float heightFactor = 1.f + std::max(0.f, (480.f - m_player.pos.y) / 480.f) * 0.3f;
+        m_player.externalVel = {-8.f * heightFactor, 0.f};
+        m_puzzle.rockExternalForce = {-5.f * heightFactor, 0.f};
     }
 
     if (gimmick == PlanetGimmick::HeavyGrav) {
@@ -1688,13 +1711,11 @@ void Game::renderPlaying() {
         SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
     }
 
-    // Saturn: ring corridor – golden haze + ice sparkles on corridor tiles
+    // Saturn: ring corridor – black space + golden corridor glow + crystal shimmer
     if (m_currentPlanet == 5) {
         SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
-        // Deep space void tint (makes solid tiles look like black space)
-        SDL_SetRenderDrawColor(m_renderer, 4, 6, 18, 38);
-        SDL_FRect full5 = {0.f, 0.f, (float)m_screenW, (float)m_screenH};
-        SDL_RenderFillRectF(m_renderer, &full5);
+        // Subtle starfield visible through void (already black background)
+        drawStarfield(m_renderer, m_screenW, m_screenH, m_titleTimer * 0.18f);
         // Golden ring shimmer on corridor areas (horizontal stripes at corridor Y levels)
         float ringGlow = (std::sin(m_titleTimer * 1.8f) + 1.f) * 0.5f;
         static const float COR_Y[] = {64.f, 320.f, 512.f}; // world Y of corridors
@@ -1724,39 +1745,59 @@ void Game::renderPlaying() {
         SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
     }
 
-    // Uranus: staircase atmosphere – teal left-drift haze
+    // Uranus: staircase atmosphere + drift arrows + cliff danger glow
     if (m_currentPlanet == 6) {
         SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
-        // Teal atmospheric haze, stronger on left (drift source)
+        // Teal atmospheric haze stronger on left
         for (int i = 0; i < 4; i++) {
-            float t = (float)i / 4.f;
-            SDL_SetRenderDrawColor(m_renderer, 30, 160, 180, (Uint8)(18 + 10 * t));
+            SDL_SetRenderDrawColor(m_renderer, 30, 160, 180, (Uint8)(14 + 8 * i));
             SDL_FRect side = {0.f, 0.f, (float)m_screenW * (0.25f * (4 - i)), (float)m_screenH};
             SDL_RenderFillRectF(m_renderer, &side);
         }
         // Drift streaks blowing left
-        float dPhase = std::fmod(m_titleTimer * 0.8f, 1.f);
+        float dPhase6 = std::fmod(m_titleTimer * 0.7f, 1.f);
         srand(1234);
-        for (int i = 0; i < 18; i++) {
+        for (int i = 0; i < 16; i++) {
             float sy6 = (float)(rand() % m_screenH);
             float ox  = (float)(rand() % m_screenW);
-            float px6 = std::fmod(ox - dPhase * (float)m_screenW + (float)m_screenW, (float)m_screenW);
-            float len6 = 30.f + (float)(rand() % 50);
-            Uint8 da = (Uint8)(25 + rand() % 30);
-            SDL_SetRenderDrawColor(m_renderer, 80, 200, 210, da);
+            float px6 = std::fmod(ox - dPhase6*(float)m_screenW + (float)m_screenW, (float)m_screenW);
+            float len6 = 28.f + (float)(rand() % 45);
+            SDL_SetRenderDrawColor(m_renderer, 80, 200, 210, (Uint8)(20 + rand() % 25));
             SDL_RenderDrawLineF(m_renderer, px6, sy6, std::max(0.f, px6 - len6), sy6 + 1.f);
         }
-        // Step edge highlights (vertical gold lines at staircase boundaries)
-        static const float STEP_X[] = {320.f, 608.f, 896.f}; // world X of step edges
-        for (float ex : STEP_X) {
-            float sxe = ex - m_camX;
-            if (sxe < -4.f || sxe > (float)m_screenW + 4.f) continue;
-            float glow6 = (std::sin(m_titleTimer * 2.5f + ex * 0.003f) + 1.f) * 0.5f;
-            SDL_SetRenderDrawColor(m_renderer, 80, 220, 220, (Uint8)(30 + 25 * glow6));
-            SDL_FRect edgeLine = {sxe - 2.f, 0.f, 4.f, (float)m_screenH};
-            SDL_RenderFillRectF(m_renderer, &edgeLine);
+
+        // Cliff danger glow (red pulse at cliff boundaries)
+        static const float CLIFF_X[] = {288.f, 608.f, 896.f};
+        for (float cx6 : CLIFF_X) {
+            float scx = cx6 - m_camX;
+            if (scx < -40.f || scx > (float)m_screenW + 40.f) continue;
+            float dGlow = (std::sin(m_titleTimer * 4.f + cx6 * 0.005f) + 1.f) * 0.5f;
+            SDL_SetRenderDrawColor(m_renderer, 200, 40, 20, (Uint8)(18 + 18 * dGlow));
+            SDL_FRect dangZone = {scx - 2.f, 0.f, 36.f, (float)m_screenH};
+            SDL_RenderFillRectF(m_renderer, &dangZone);
         }
+
+        // Drift direction arrows (← ) spread across screen, hint at drift direction
+        // Draw 5 rows of arrows at evenly spaced Y positions
+        for (int row6 = 0; row6 < 5; row6++) {
+            float ay = (float)m_screenH * (0.15f + row6 * 0.17f);
+            float arAlpha6 = 0.3f + 0.2f * std::sin(m_titleTimer * 2.f + row6 * 0.8f);
+            Uint8 aa6 = (Uint8)(arAlpha6 * 220.f);
+            // Draw a left-pointing arrow at screen center-right
+            float arX = (float)m_screenW * 0.75f;
+            SDL_SetRenderDrawColor(m_renderer, 68, 187, 204, aa6);
+            drawWindArrow(m_renderer, arX, ay, -1.f, 0.f, 28.f, aa6);
+        }
+
         SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
+
+        // Drift direction label near right edge
+        if (m_ui.getFont()) {
+            SDL_Color dc6 = {68, 210, 220, 180};
+            m_ui.renderText(m_renderer, m_ui.getFont(), "← drift",
+                            (float)m_screenW - 45.f, (float)m_screenH * 0.5f,
+                            dc6, true);
+        }
     }
 
     // Neptune: 3-floor indicators – floor transition zone glow
@@ -2536,21 +2577,44 @@ void Game::renderPlaying() {
             if (fx + frag.radius < 0 || fx - frag.radius > (float)m_screenW) continue;
             if (fy + frag.radius < 0 || fy - frag.radius > (float)m_screenH) continue;
 
-            // Outer glow
-            SDL_SetRenderDrawColor(m_renderer, 160, 205, 255, 100);
-            fillCircle(m_renderer, fx, fy, frag.radius + 4.f);
-            // Main body
-            SDL_SetRenderDrawColor(m_renderer, 200, 228, 255, 230);
-            fillCircle(m_renderer, fx, fy, frag.radius);
-            // Bright highlight
-            SDL_SetRenderDrawColor(m_renderer, 240, 250, 255, 255);
-            fillCircle(m_renderer, fx - frag.radius*0.28f, fy - frag.radius*0.28f, frag.radius*0.38f);
-            // Motion trail
-            float tx = fx - (frag.vx > 0 ? frag.radius*2.2f : -frag.radius*2.2f);
-            SDL_SetRenderDrawColor(m_renderer, 180, 215, 255, 60);
-            SDL_FRect trail2 = {std::min(fx, tx) - frag.radius, fy - 5.f,
-                                std::abs(fx - tx) + frag.radius * 2.f, 10.f};
+            float cr = frag.radius;
+            // Motion trail (elongated in travel direction)
+            float trailLen = cr * 2.8f;
+            float trailX = fx - (frag.vx > 0 ? trailLen : -trailLen);
+            SDL_SetRenderDrawColor(m_renderer, 80, 150, 255, 40);
+            SDL_FRect trail2 = {std::min(fx - cr*0.3f, trailX), fy - 3.f,
+                                std::abs(fx - cr*0.3f - trailX) + cr*0.6f, 6.f};
             SDL_RenderFillRectF(m_renderer, &trail2);
+
+            // Outer blue glow
+            SDL_SetRenderDrawColor(m_renderer, 100, 160, 255, 70);
+            fillDiamond(m_renderer, fx, fy, cr + 5.f);
+
+            // Crystal body — sharp diamond shape (elongated along travel axis)
+            SDL_SetRenderDrawColor(m_renderer, 130, 190, 255, 240);
+            // Elongated along X (direction of travel): draw as narrow tall diamond
+            float cw = cr * 0.55f;  // narrow width
+            float ch = cr * 1.15f;  // tall height (pointed top/bottom)
+            for (float dy = -ch; dy <= ch; dy += 1.f) {
+                float hw = cw * (1.f - std::abs(dy) / ch);
+                if (hw > 0.f)
+                    SDL_RenderDrawLineF(m_renderer, fx - hw, fy + dy, fx + hw, fy + dy);
+            }
+            // Bright highlight facet (top-left)
+            SDL_SetRenderDrawColor(m_renderer, 200, 235, 255, 255);
+            for (float dy = -ch * 0.5f; dy <= 0.f; dy += 1.f) {
+                float hw = cw * 0.5f * (1.f - std::abs(dy) / (ch * 0.5f));
+                if (hw > 0.f)
+                    SDL_RenderDrawLineF(m_renderer,
+                                       fx - hw - cw*0.2f, fy + dy,
+                                       fx - cw*0.2f,       fy + dy);
+            }
+            // Sharp tip sparkle points
+            SDL_SetRenderDrawColor(m_renderer, 220, 245, 255, 255);
+            SDL_FRect tipT = {fx - 1.f, fy - ch - 2.f, 2.f, 4.f};
+            SDL_FRect tipB = {fx - 1.f, fy + ch - 1.f, 2.f, 4.f};
+            SDL_RenderFillRectF(m_renderer, &tipT);
+            SDL_RenderFillRectF(m_renderer, &tipB);
         }
         SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_NONE);
 
@@ -3912,11 +3976,11 @@ void Game::updateMarsMeteorites(float dt) {
 }
 
 void Game::updateSaturnFragments(float dt) {
-    static const float SPEED    = 185.f;
+    static const float SPEED    = 195.f;
     static const float MAP_W    = 1152.f;
-    // Ring corridor Y levels: upper corridor (96), middle corridor (352), lower corridor (560)
-    static const float Y_LEVELS[] = {96.f, 352.f, 560.f};
-    static const int   N_LEVELS  = 3;
+    // 4-tile ring: upper corridor center y=128 (rows 2-5), lower center y=512 (rows 14-17)
+    static const float Y_LEVELS[] = {128.f, 512.f};
+    static const int   N_LEVELS  = 2;
 
     AABB playerAABB = m_player.getAABB();
 

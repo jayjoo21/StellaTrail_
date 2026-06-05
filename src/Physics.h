@@ -68,7 +68,7 @@ namespace Planets {
         { "Jupiter", 24.80f, 0.50f, 2.50f, 1.0f, 0.7f, PlanetGimmick::HeavyGrav,
           {40, 25, 15, 255}, {200, 130,  70, 255} },
         { "Saturn",  10.40f, 0.10f, 1.10f, 0.02f,1.0f, PlanetGimmick::Slippery,
-          {40, 35, 20, 255}, {210, 190, 120, 255} },
+          {0,  0,  0,  255}, {210, 190, 120, 255} },
         { "Uranus",   8.87f, 0.30f, 0.95f, 1.0f, 1.0f, PlanetGimmick::SideDrift,
           {10, 30, 40, 255}, { 80, 200, 200, 255} },
         { "Neptune", 11.20f, 0.25f, 1.20f, 1.0f, 1.0f, PlanetGimmick::WindStorm,

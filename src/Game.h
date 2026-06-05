@@ -160,6 +160,9 @@ private:
     std::vector<IceFragment> m_saturnFragments;
     float m_saturnNextFrag = 3.f;
 
+    // Uranus cliff death zones (void tiles between staircase terraces)
+    std::vector<AABB> m_uranusCliffs;
+
     // Venus
     std::vector<ToxicCloud> m_venusClouds;
 

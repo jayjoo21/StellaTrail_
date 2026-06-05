@@ -64,13 +64,26 @@ void TileMap::drawTile(SDL_Renderer* r, int id, float dx, float dy) {
         SDL_Rect src = {srcCol * TILE_SIZE, srcRow * TILE_SIZE, TILE_SIZE, TILE_SIZE};
         SDL_RenderCopyF(r, m_tileset, &src, &dst);
     } else {
-        SDL_Color c = tileColor(id);
+        SDL_Color c = (id >= 0 && id < 8 && m_hasOverride[id])
+                      ? m_tileOverride[id] : tileColor(id);
         SDL_SetRenderDrawColor(r, c.r, c.g, c.b, 255);
         SDL_RenderFillRectF(r, &dst);
-        // Grid line
-        SDL_SetRenderDrawColor(r, 0, 0, 0, 40);
+        SDL_SetRenderDrawColor(r, 0, 0, 0, 30);
         SDL_RenderDrawRectF(r, &dst);
     }
+}
+
+int TileMap::getTileId(int col, int row) const {
+    if (row < 0 || row >= m_rows || col < 0 || col >= m_cols) return -1;
+    return m_tiles[row][col].id;
+}
+
+void TileMap::setColorOverride(int tileId, SDL_Color col) {
+    if (tileId >= 0 && tileId < 8) { m_hasOverride[tileId] = true; m_tileOverride[tileId] = col; }
+}
+
+void TileMap::clearColorOverrides() {
+    for (int i = 0; i < 8; i++) m_hasOverride[i] = false;
 }
 
 SDL_Color TileMap::tileColor(int id) {
